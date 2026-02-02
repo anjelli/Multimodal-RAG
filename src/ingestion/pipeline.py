@@ -25,7 +25,12 @@ class IngestionPipeline:
 
     def load_data(self):
         import shutil
-        from unstructured.partition.pdf import partition_pdf
+        try:
+            from unstructured.partition.pdf import partition_pdf
+        except ModuleNotFoundError:
+            logging.warning("unstructured not installed; falling back to pdfplumber")
+            self._load_data_with_pdfplumber()
+            return
 
         logging.info("Loading PDF and extracting elements from %s", self.source)
         # If images extraction is requested, ensure pdfinfo (poppler) is available on PATH.
