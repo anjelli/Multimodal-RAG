@@ -61,8 +61,12 @@ class IngestionPipeline:
                 raise
 
     def _load_data_with_pdfplumber(self):
-        """Fallback: extract text and tables using pdfplumber (no system dependencies)."""
-        from src.ingestion.pdfplumber_extract import extract_with_pdfplumber, save_tables_as_csvs
+        """Fallback: extract text, tables, and images using pdfplumber (no system dependencies)."""
+        from src.ingestion.pdfplumber_extract import (
+            extract_with_pdfplumber,
+            extract_images_with_pdfplumber,
+            save_tables_as_csvs,
+        )
 
         # Extract with pdfplumber
         extracted = extract_with_pdfplumber(self.source)
@@ -82,6 +86,12 @@ class IngestionPipeline:
             def __str__(self):
                 return self.text
 
+        class ImageElement:
+            def __init__(self, path):
+                self.filename = path
+            def __str__(self):
+                return f"Image({self.filename})"
+
         self.raw_elements = []
         for block in text_blocks:
             # Split into paragraphs and add
@@ -89,6 +99,11 @@ class IngestionPipeline:
             for para in text.split("\n"):
                 if para.strip():
                     self.raw_elements.append(TextElement(para))
+
+        if self.extract_images:
+            image_paths = extract_images_with_pdfplumber(self.source, self.extracted_dir)
+            for path in image_paths:
+                self.raw_elements.append(ImageElement(path))
 
     def _save_table_df(self, df: pd.DataFrame, prefix: str, idx: int) -> str:
         out_dir = Path("processed_data")
@@ -120,7 +135,11 @@ class IngestionPipeline:
                 elif "Image" in t:
                     # element may include a filename saved by unstructured; try to capture it
                     try:
-                        path = getattr(element, "filename", None) or getattr(element, "source", None)
+                        path = (
+                            getattr(element, "filename", None)
+                            or getattr(element, "source", None)
+                            or getattr(getattr(element, "metadata", None), "image_path", None)
+                        )
                         if path:
                             self.processed_data["Image"].append({"path": path, "raw": str(element)})
                         else:
