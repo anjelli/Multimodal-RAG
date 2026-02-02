@@ -1,5 +1,6 @@
 import logging
 import os
+import uuid
 from pathlib import Path
 
 from src.config import Config
@@ -69,11 +70,8 @@ def run_once(source_pdf: str = None):
     table_contents = []
     for t in table_items:
         if isinstance(t, dict) and t.get("csv_path"):
-            csv_path = t.get("csv_path")
-            if isinstance(csv_path, dict):
-                csv_path = csv_path.get("csv_path")
-            table_summaries.append(f"Table {Path(str(csv_path)).name} shape={t.get('shape')}")
-            table_contents.append({**t, "type": "table", "source": source_pdf, "csv_path": csv_path})
+            table_summaries.append(f"Table {Path(t['csv_path']).name} shape={t.get('shape')}")
+            table_contents.append({**t, "type": "table", "source": source_pdf})
         else:
             table_summaries.append(simple_text_summary(t.get("raw") if isinstance(t, dict) else str(t), 300))
             table_contents.append({"raw": t.get("raw") if isinstance(t, dict) else str(t), "type": "table", "source": source_pdf})
