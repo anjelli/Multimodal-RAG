@@ -4,10 +4,9 @@ import os
 from pathlib import Path
 
 from src.config import Config
-from src.ingestion.pipeline import IngestionPipeline
+from src.retriever.embeddings import EmbeddingClient
+from src.retriever.chroma_client import get_chroma_collection
 from src.retriever.pipeline import RetrieverPipeline
-from src.image_processing.pipeline import ImageProcessor
-from src.llm_output.pipeline import LLMOutputGenerator
 
 
 def setup_logging(level=logging.INFO):
@@ -21,6 +20,8 @@ def parse_args():
     p.add_argument("--extracted-dir", help="extracted images dir", default=str(Config.EXTRACTED_DIR))
     p.add_argument("--openai-key", help="OpenAI API key (ENV fallback)", default=os.environ.get("OPENAI_API_KEY"))
     p.add_argument("--no-images", help="Skip extracting images (don't require poppler)", action="store_true")
+    p.add_argument("--question", help="Query the vectorstore instead of ingesting", default=None)
+    p.add_argument("--top-k", help="Number of results to return for queries", type=int, default=4)
     return p.parse_args()
 
 
@@ -28,6 +29,19 @@ def main():
     setup_logging()
     args = parse_args()
     Config.ensure_dirs()
+
+    if args.question:
+        logging.info("Running query against vectorstore")
+        embedder = EmbeddingClient()
+        client, collection = get_chroma_collection()
+        retriever = RetrieverPipeline(embedding_model=embedder, vectorstore=collection)
+        results = retriever.retrieve(args.question, k=args.top_k)
+        for idx, result in enumerate(results, start=1):
+            print(f"[{idx}] score={result.get('distance')}")
+            print(f"summary: {result.get('summary')}")
+            print(f"metadata: {result.get('metadata')}")
+            print(f"content: {result.get('content')}\n")
+        return
 
     source = args.source
     if source is None:
@@ -49,6 +63,8 @@ def main():
         use_images = not args.no_images
 
     # Ingestion
+    from src.ingestion.pipeline import IngestionPipeline
+
     ingestion = IngestionPipeline(source, extracted_dir=str(args.extracted_dir), extract_images=use_images)
     ingestion.load_data()
     ingestion.process_data()
