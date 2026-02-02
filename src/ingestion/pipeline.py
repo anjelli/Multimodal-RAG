@@ -80,22 +80,20 @@ class IngestionPipeline:
 
         # Save tables to CSVs
         if tables:
-            csv_entries = save_tables_as_csvs(tables, "processed_data", self.source)
-            for entry in csv_entries:
-                self.processed_data["Table"].append(entry)
+            csv_paths = save_tables_as_csvs(tables, "processed_data", self.source)
+            for csv_path in csv_paths:
+                self.processed_data["Table"].append({"csv_path": csv_path})
 
         # Convert text blocks into elements (mimic unstructured output)
         class TextElement:
-            def __init__(self, text, page_number=None):
+            def __init__(self, text):
                 self.text = text
-                self.metadata = {"page_number": page_number} if page_number else {}
             def __str__(self):
                 return self.text
 
         class ImageElement:
-            def __init__(self, path, page_number=None):
+            def __init__(self, path):
                 self.filename = path
-                self.metadata = {"page_number": page_number} if page_number else {}
             def __str__(self):
                 return f"Image({self.filename})"
 
@@ -103,27 +101,14 @@ class IngestionPipeline:
         for block in text_blocks:
             # Split into paragraphs and add
             text = block.get("text", "")
-            page_number = block.get("page")
             for para in text.split("\n"):
                 if para.strip():
-                    self.raw_elements.append(TextElement(para, page_number=page_number))
+                    self.raw_elements.append(TextElement(para))
 
         if self.extract_images:
-            image_entries = extract_images_with_pdfplumber(self.source, self.extracted_dir)
-            for entry in image_entries:
-                self.raw_elements.append(
-                    ImageElement(entry.get("path"), page_number=entry.get("page"))
-                )
-
-    @staticmethod
-    def _extract_page_number(element) -> Optional[int]:
-        metadata = getattr(element, "metadata", None)
-        if metadata is None:
-            return None
-        page_number = getattr(metadata, "page_number", None)
-        if isinstance(metadata, dict):
-            page_number = metadata.get("page_number", page_number)
-        return page_number
+            image_paths = extract_images_with_pdfplumber(self.source, self.extracted_dir)
+            for path in image_paths:
+                self.raw_elements.append(ImageElement(path))
 
     def _save_table_df(self, df: pd.DataFrame, prefix: str, idx: int) -> str:
         out_dir = Path("processed_data")
@@ -147,29 +132,11 @@ class IngestionPipeline:
                 elif "Title" in t:
                     self.processed_data["Title"].append(str(element))
                 elif "NarrativeText" in t:
-                    page_number = self._extract_page_number(element)
-                    if page_number:
-                        self.processed_data["NarrativeText"].append(
-                            {"text": str(element), "metadata": {"page_number": page_number}}
-                        )
-                    else:
-                        self.processed_data["NarrativeText"].append(str(element))
+                    self.processed_data["NarrativeText"].append(str(element))
                 elif "Text" in t:
-                    page_number = self._extract_page_number(element)
-                    if page_number:
-                        self.processed_data["Text"].append(
-                            {"text": str(element), "metadata": {"page_number": page_number}}
-                        )
-                    else:
-                        self.processed_data["Text"].append(str(element))
+                    self.processed_data["Text"].append(str(element))
                 elif "ListItem" in t:
-                    page_number = self._extract_page_number(element)
-                    if page_number:
-                        self.processed_data["ListItem"].append(
-                            {"text": str(element), "metadata": {"page_number": page_number}}
-                        )
-                    else:
-                        self.processed_data["ListItem"].append(str(element))
+                    self.processed_data["ListItem"].append(str(element))
                 elif "Image" in t:
                     # element may include a filename saved by unstructured; try to capture it
                     try:
@@ -178,12 +145,8 @@ class IngestionPipeline:
                             or getattr(element, "source", None)
                             or getattr(getattr(element, "metadata", None), "image_path", None)
                         )
-                        page_number = self._extract_page_number(element)
                         if path:
-                            entry = {"path": path, "raw": str(element)}
-                            if page_number:
-                                entry["page"] = page_number
-                            self.processed_data["Image"].append(entry)
+                            self.processed_data["Image"].append({"path": path, "raw": str(element)})
                         else:
                             self.processed_data["Image"].append({"raw": str(element)})
                     except Exception:

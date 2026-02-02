@@ -102,7 +102,7 @@ class RetrieverPipeline:
         result = query_fn(
             query_embeddings=query_embedding,
             n_results=k,
-            include=["documents", "metadatas", "distances"],
+            include=["ids", "documents", "metadatas", "distances"],
         )
 
         ids = (result.get("ids") or [[]])[0]
