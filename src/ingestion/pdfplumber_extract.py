@@ -53,6 +53,54 @@ def extract_with_pdfplumber(pdf_path: str, max_pages: int = None) -> Dict[str, L
     return elements
 
 
+def extract_images_with_pdfplumber(pdf_path: str, output_dir: str, max_pages: int = None) -> List[str]:
+    """
+    Extract embedded images from a PDF using pdfplumber and save them to output_dir.
+    Returns a list of saved image paths.
+    """
+    try:
+        import pdfplumber
+    except ImportError:
+        raise RuntimeError("pdfplumber not installed. Install with: pip install pdfplumber")
+
+    out_dir = Path(output_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    saved_paths: List[str] = []
+
+    with pdfplumber.open(pdf_path) as pdf:
+        num_pages = len(pdf.pages)
+        if max_pages:
+            num_pages = min(num_pages, max_pages)
+
+        for page_num in range(num_pages):
+            page = pdf.pages[page_num]
+            images = page.images or []
+            for img_idx, img in enumerate(images):
+                obj_id = img.get("object_id") or img.get("xref") or img.get("name")
+                if obj_id is None:
+                    continue
+                try:
+                    extracted = page.extract_image(obj_id)
+                except Exception as exc:
+                    logging.warning("Failed to extract image on page %s (%s): %s", page_num + 1, obj_id, exc)
+                    continue
+
+                img_bytes = extracted.get("image")
+                ext = extracted.get("ext") or "png"
+                if not img_bytes:
+                    continue
+                filename = f"{Path(pdf_path).stem}_page{page_num + 1}_img{img_idx + 1}.{ext}"
+                out_path = out_dir / filename
+                try:
+                    with open(out_path, "wb") as f:
+                        f.write(img_bytes)
+                    saved_paths.append(str(out_path))
+                except Exception as exc:
+                    logging.warning("Failed to save image %s: %s", out_path, exc)
+
+    return saved_paths
+
+
 def save_tables_as_csvs(tables: List[Dict], output_dir: str, pdf_name: str) -> List[str]:
     """
     Save extracted tables as CSV files. Returns list of CSV paths.
