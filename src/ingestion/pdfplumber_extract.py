@@ -53,9 +53,7 @@ def extract_with_pdfplumber(pdf_path: str, max_pages: int = None) -> Dict[str, L
     return elements
 
 
-def extract_images_with_pdfplumber(
-    pdf_path: str, output_dir: str, max_pages: int = None
-) -> List[Dict[str, Any]]:
+def extract_images_with_pdfplumber(pdf_path: str, output_dir: str, max_pages: int = None) -> List[str]:
     """
     Extract embedded images from a PDF using pdfplumber and save them to output_dir.
     Returns a list of saved image paths.
@@ -67,7 +65,7 @@ def extract_images_with_pdfplumber(
 
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    saved: List[Dict[str, Any]] = []
+    saved_paths: List[str] = []
 
     with pdfplumber.open(pdf_path) as pdf:
         num_pages = len(pdf.pages)
@@ -91,17 +89,16 @@ def extract_images_with_pdfplumber(
                 ext = extracted.get("ext") or "png"
                 if not img_bytes:
                     continue
-                page_number = page_num + 1
-                filename = f"{Path(pdf_path).stem}_page{page_number}_img{img_idx + 1}.{ext}"
+                filename = f"{Path(pdf_path).stem}_page{page_num + 1}_img{img_idx + 1}.{ext}"
                 out_path = out_dir / filename
                 try:
                     with open(out_path, "wb") as f:
                         f.write(img_bytes)
-                    saved.append({"path": str(out_path), "page": page_number})
+                    saved_paths.append(str(out_path))
                 except Exception as exc:
                     logging.warning("Failed to save image %s: %s", out_path, exc)
 
-    return saved
+    return saved_paths
 
 
 def save_tables_as_csvs(tables: List[Dict], output_dir: str, pdf_name: str) -> List[Dict[str, Any]]:
