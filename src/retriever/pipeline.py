@@ -33,6 +33,9 @@ class RetrieverPipeline:
                 for k in ("path", "csv_path", "shape", "type"):
                     if content.get(k) is not None:
                         meta[k] = content.get(k)
+                extra_meta = content.get("metadata")
+                if isinstance(extra_meta, dict):
+                    meta.update(extra_meta)
             metadatas.append(meta)
 
         # If vectorstore is a chroma collection (has add(ids=...)), use its API
@@ -84,6 +87,50 @@ class RetrieverPipeline:
                     persist()
             except Exception:
                 logging.exception("Failed to add using vectorstore.add_documents")
+
+    def retrieve(self, query: str, k: int = 4) -> List[Dict[str, Any]]:
+        if not query:
+            return []
+        if not hasattr(self.embedding_model, "embed_texts"):
+            raise RuntimeError("Embedding model does not support embed_texts.")
+
+        query_embedding = self.embedding_model.embed_texts([query])
+        query_fn = getattr(self.vectorstore, "query", None)
+        if not callable(query_fn):
+            raise RuntimeError("Vectorstore does not support query().")
+
+        result = query_fn(
+            query_embeddings=query_embedding,
+            n_results=k,
+            include=["documents", "metadatas", "distances"],
+        )
+
+        ids = (result.get("ids") or [[]])[0]
+        docs = (result.get("documents") or [[]])[0]
+        metas = (result.get("metadatas") or [[]])[0]
+        distances = (result.get("distances") or [[]])[0]
+
+        contents = {}
+        try:
+            with self._open_docstore() as ds:
+                for _id in ids:
+                    if _id in ds:
+                        contents[_id] = ds.get(_id)
+        except Exception:
+            logging.exception("Failed to read from docstore %s", self.docstore_path)
+
+        results = []
+        for _id, doc, meta, dist in zip(ids, docs, metas, distances):
+            results.append(
+                {
+                    "id": _id,
+                    "summary": doc,
+                    "metadata": meta,
+                    "content": contents.get(_id),
+                    "distance": dist,
+                }
+            )
+        return results
 
     def create_multi_vector_retriever(self, text_summaries, texts, table_summaries, tables, image_summaries, images):
         # Ensure documents are added first

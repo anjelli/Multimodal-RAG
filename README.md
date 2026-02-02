@@ -31,6 +31,12 @@ To set up the project, clone the repository and install the required dependencie
 pip install -r requirements.txt
 ```
 
+If you see `ModuleNotFoundError: No module named 'pandas'` while running the pipeline, make sure the dependencies are installed (the `requirements.txt` file includes `pandas`) or install it explicitly:
+
+```bash
+pip install pandas
+```
+
 Usage (CLI):
 
 ```
