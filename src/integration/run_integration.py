@@ -1,11 +1,13 @@
 import logging
-import uuid
+import os
 from pathlib import Path
 
 from src.config import Config
 from src.ingestion.pipeline import IngestionPipeline
+from src.ingestion.chunking import chunk_text_items
 from src.retriever.embeddings import EmbeddingClient
 from src.retriever.chroma_client import get_chroma_collection
+from src.retriever.pipeline import RetrieverPipeline
 from src.llm_output.pipeline import LLMOutputGenerator
 from src.llm_output.adapter import ModelClient
 
@@ -15,6 +17,28 @@ def simple_text_summary(text: str, max_chars: int = 400) -> str:
         return ""
     s = str(text).strip()
     return s[:max_chars] + ("..." if len(s) > max_chars else "")
+
+
+def _normalize_text_items(data, source_pdf: str):
+    text_items = []
+    for key in ("NarrativeText", "ListItem", "Text"):
+        for item in data.get(key, []):
+            if isinstance(item, dict):
+                text_items.append(
+                    {
+                        "text": item.get("text", ""),
+                        "metadata": {
+                            "source": source_pdf,
+                            "type": key.lower(),
+                            **(item.get("metadata") or {}),
+                        },
+                    }
+                )
+            else:
+                text_items.append(
+                    {"text": str(item), "metadata": {"source": source_pdf, "type": key.lower()}}
+                )
+    return text_items
 
 
 def run_once(source_pdf: str = None):
@@ -36,48 +60,48 @@ def run_once(source_pdf: str = None):
     data = ing.get_processed_data()
 
     # Prepare simple summaries
-    texts = data.get("NarrativeText", []) + data.get("ListItem", [])
-    text_summaries = [simple_text_summary(t, max_chars=400) for t in texts]
+    text_items = _normalize_text_items(data, source_pdf)
+    chunked_texts = chunk_text_items(text_items, chunk_size=1000, overlap=100)
+    text_summaries = [simple_text_summary(t["text"], max_chars=400) for t in chunked_texts]
 
     table_items = data.get("Table", [])
     table_summaries = []
+    table_contents = []
     for t in table_items:
         if isinstance(t, dict) and t.get("csv_path"):
-            table_summaries.append(f"Table {Path(t['csv_path']).name} shape={t.get('shape')}")
+            csv_path = t.get("csv_path")
+            if isinstance(csv_path, dict):
+                csv_path = csv_path.get("csv_path")
+            table_summaries.append(f"Table {Path(str(csv_path)).name} shape={t.get('shape')}")
+            table_contents.append({**t, "type": "table", "source": source_pdf, "csv_path": csv_path})
         else:
             table_summaries.append(simple_text_summary(t.get("raw") if isinstance(t, dict) else str(t), 300))
+            table_contents.append({"raw": t.get("raw") if isinstance(t, dict) else str(t), "type": "table", "source": source_pdf})
 
     images = data.get("Image", [])
     image_summaries = []
-    image_refs = []
+    image_contents = []
     for im in images:
         if isinstance(im, dict) and im.get("path"):
-            image_refs.append(im["path"])
             image_summaries.append(f"Image file {Path(im['path']).name}")
+            image_contents.append({**im, "type": "image", "source": source_pdf})
         else:
             image_summaries.append(simple_text_summary(str(im), 200))
+            image_contents.append({"raw": str(im), "type": "image", "source": source_pdf})
 
     # create embeddings
     embedder = EmbeddingClient()
     docs = []
-    metadatas = []
-    ids = []
 
     # combine all content types as documents
-    for s, orig in zip(text_summaries, texts):
-        ids.append(str(uuid.uuid4()))
+    for s, orig in zip(text_summaries, chunked_texts):
         docs.append(s)
-        metadatas.append({"source": source_pdf, "type": "text"})
 
-    for s, orig in zip(table_summaries, table_items):
-        ids.append(str(uuid.uuid4()))
+    for s, orig in zip(table_summaries, table_contents):
         docs.append(s)
-        metadatas.append({"source": source_pdf, "type": "table", **(orig if isinstance(orig, dict) else {})})
 
-    for s, orig in zip(image_summaries, image_refs if image_refs else images):
-        ids.append(str(uuid.uuid4()))
+    for s, orig in zip(image_summaries, image_contents):
         docs.append(s)
-        metadatas.append({"source": source_pdf, "type": "image", "ref": orig})
 
     if not docs:
         raise SystemExit("No documents found to index during integration run")
@@ -86,23 +110,24 @@ def run_once(source_pdf: str = None):
     embeddings = embedder.embed_texts(docs)
 
     client, collection = get_chroma_collection()
+    retriever = RetrieverPipeline(embedding_model=embedder, vectorstore=collection)
+    text_contents = [
+        {"text": item["text"], "metadata": item["metadata"], "type": item["metadata"].get("type", "text")}
+        for item in chunked_texts
+    ]
+    retriever.add_documents(
+        docs,
+        text_contents + table_contents + image_contents,
+        embeddings=embeddings,
+    )
 
-    # add into chroma collection
-    # chroma collection.add expects ids, documents, metadatas, embeddings
-    try:
-        collection.add(ids=ids, documents=docs, metadatas=metadatas, embeddings=embeddings)
-    except Exception:
-        # try with minimal fields
-        collection.add(ids=ids, documents=docs, metadatas=metadatas)
-
-    # persist client
     try:
         client.persist()
     except Exception:
         pass
 
     # smoke check: ensure collection has at least one id
-    res = collection.get(ids=ids[:10], include=["ids"]) if hasattr(collection, "get") else None
+    res = collection.get(include=["ids"]) if hasattr(collection, "get") else None
     # best-effort test: if collection.count is available
     count = None
     try:
@@ -123,7 +148,7 @@ def run_once(source_pdf: str = None):
     # example question + LLM invocation
     model = ModelClient()
     sample_q = "Give a short summary of the indexed documents and list sources."
-    data_dict = {"context": {"texts": texts, "images": image_summaries}, "question": sample_q}
+    data_dict = {"context": {"texts": [t["text"] for t in chunked_texts], "images": image_summaries}, "question": sample_q}
     messages = LLMOutputGenerator.img_prompt_func(data_dict)
     answer = model.invoke(messages)
     logging.info("LLM answer: %s", answer)
