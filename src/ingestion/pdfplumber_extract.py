@@ -101,13 +101,13 @@ def extract_images_with_pdfplumber(pdf_path: str, output_dir: str, max_pages: in
     return saved_paths
 
 
-def save_tables_as_csvs(tables: List[Dict], output_dir: str, pdf_name: str) -> List[str]:
+def save_tables_as_csvs(tables: List[Dict], output_dir: str, pdf_name: str) -> List[Dict[str, Any]]:
     """
     Save extracted tables as CSV files. Returns list of CSV paths.
     """
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    csv_paths = []
+    csv_paths: List[Dict[str, Any]] = []
 
     for i, table_info in enumerate(tables):
         df = table_info.get("df")
@@ -118,7 +118,9 @@ def save_tables_as_csvs(tables: List[Dict], output_dir: str, pdf_name: str) -> L
             csv_path = out_dir / f"{Path(pdf_name).stem}_page{page}_table{table_idx}.csv"
             try:
                 df.to_csv(csv_path, index=False)
-                csv_paths.append(str(csv_path))
+                csv_paths.append(
+                    {"csv_path": str(csv_path), "page": page, "table_idx": table_idx}
+                )
                 logging.info(f"Saved table to {csv_path}")
             except Exception as e:
                 logging.exception(f"Failed to save table CSV: {e}")
