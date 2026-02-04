@@ -58,9 +58,10 @@ class IngestionPipeline:
         try:
             self.raw_elements = partition_pdf(**kwargs)
         except Exception as e:
-            # If hi_res fails (e.g., Poppler missing) or unstructured API mismatch, fall back to pdfplumber
+            # If hi_res fails (e.g., Poppler missing), unstructured API mismatch, or OCR failure, fall back to pdfplumber
             err = str(e).lower()
-            if "pdfinfo" in err or "poppler" in err or "unexpected keyword argument" in err:
+            ocr_failure = "tesseract" in err or "hocr" in err or "tess_" in err or "ocr" in err
+            if "pdfinfo" in err or "poppler" in err or "unexpected keyword argument" in err or ocr_failure:
                 logging.warning("partition_pdf failed; falling back to pdfplumber: %s", e)
                 self._load_data_with_pdfplumber()
             else:
@@ -71,6 +72,7 @@ class IngestionPipeline:
         from src.ingestion.pdfplumber_extract import (
             extract_with_pdfplumber,
             extract_images_with_pdfplumber,
+            extract_images_with_pymupdf,
             save_tables_as_csvs,
         )
 
@@ -111,6 +113,11 @@ class IngestionPipeline:
 
         if self.extract_images:
             image_paths = extract_images_with_pdfplumber(self.source, self.extracted_dir)
+            if not image_paths:
+                try:
+                    image_paths = extract_images_with_pymupdf(self.source, self.extracted_dir)
+                except Exception as exc:
+                    logging.warning("PyMuPDF image extraction unavailable: %s", exc)
             for path in image_paths:
                 self.raw_elements.append(ImageElement(path))
 
