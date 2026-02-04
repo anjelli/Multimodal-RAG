@@ -58,9 +58,10 @@ class IngestionPipeline:
         try:
             self.raw_elements = partition_pdf(**kwargs)
         except Exception as e:
-            # If hi_res fails (e.g., Poppler missing), fall back to pdfplumber
-            if "pdfinfo" in str(e) or "poppler" in str(e).lower():
-                logging.warning("partition_pdf failed due to Poppler; falling back to pdfplumber")
+            # If hi_res fails (e.g., Poppler missing) or unstructured API mismatch, fall back to pdfplumber
+            err = str(e).lower()
+            if "pdfinfo" in err or "poppler" in err or "unexpected keyword argument" in err:
+                logging.warning("partition_pdf failed; falling back to pdfplumber: %s", e)
                 self._load_data_with_pdfplumber()
             else:
                 raise
@@ -82,7 +83,10 @@ class IngestionPipeline:
         if tables:
             csv_paths = save_tables_as_csvs(tables, "processed_data", self.source)
             for csv_path in csv_paths:
-                self.processed_data["Table"].append({"csv_path": csv_path})
+                if isinstance(csv_path, dict):
+                    self.processed_data["Table"].append(csv_path)
+                else:
+                    self.processed_data["Table"].append({"csv_path": csv_path})
 
         # Convert text blocks into elements (mimic unstructured output)
         class TextElement:
