@@ -64,6 +64,12 @@ class RetrieverPipeline:
                 if embeddings is not None:
                     kwargs["embeddings"] = embeddings
                 add_fn(**kwargs)
+                logging.info("Added %s documents to collection", len(summaries))
+                try:
+                    count = self.vectorstore.count()
+                except Exception:
+                    count = "unknown"
+                logging.info("Collection count after ingestion: %s", count)
                 # try persist on client if available (chroma client may be attached)
                 client = getattr(self.vectorstore, "client", None)
                 if client is not None:
@@ -75,6 +81,12 @@ class RetrieverPipeline:
                 # fallback if add signature different
                 try:
                     self.vectorstore.add(summaries)
+                    logging.info("Added %s documents to collection", len(summaries))
+                    try:
+                        count = self.vectorstore.count()
+                    except Exception:
+                        count = "unknown"
+                    logging.info("Collection count after ingestion: %s", count)
                 except Exception:
                     logging.exception("Failed to add documents to vectorstore")
         else:
@@ -82,6 +94,12 @@ class RetrieverPipeline:
             docs = [Document(page_content=s, metadata=m) for s, m in zip(summaries, metadatas)]
             try:
                 self.vectorstore.add_documents(docs)
+                logging.info("Added %s documents to collection", len(summaries))
+                try:
+                    count = self.vectorstore.count()
+                except Exception:
+                    count = "unknown"
+                logging.info("Collection count after ingestion: %s", count)
                 persist = getattr(self.vectorstore, "persist", None)
                 if callable(persist):
                     persist()
@@ -98,6 +116,12 @@ class RetrieverPipeline:
         query_fn = getattr(self.vectorstore, "query", None)
         if not callable(query_fn):
             raise RuntimeError("Vectorstore does not support query().")
+
+        try:
+            count = self.vectorstore.count()
+        except Exception:
+            count = "unknown"
+        logging.info("Collection count before query: %s", count)
 
         result = query_fn(
             query_embeddings=query_embedding,

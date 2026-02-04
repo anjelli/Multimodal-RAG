@@ -1,8 +1,11 @@
 from typing import Optional
-from src.config import Config
 
 
-def get_chroma_collection(collection_name: str = "MMRAG"):
+def get_chroma_collection(collection_name: str, persist_dir: str):
+    if not collection_name:
+        raise ValueError("collection_name must be provided")
+    if not persist_dir:
+        raise ValueError("persist_dir must be provided")
     try:
         import chromadb
     except Exception as e:
@@ -15,11 +18,11 @@ def get_chroma_collection(collection_name: str = "MMRAG"):
     try:
         from chromadb.config import Settings
 
-        client = chromadb.Client(Settings(chroma_db_impl="duckdb+parquet", persist_directory=str(Config.CHROMA_PERSIST_DIR)))
+        client = chromadb.Client(Settings(chroma_db_impl="duckdb+parquet", persist_directory=str(persist_dir)))
     except Exception:
         try:
             # newer chroma versions accept simple kwargs
-            client = chromadb.Client(persist_directory=str(Config.CHROMA_PERSIST_DIR))
+            client = chromadb.Client(persist_directory=str(persist_dir))
         except Exception:
             try:
                 # last resort: default constructor
