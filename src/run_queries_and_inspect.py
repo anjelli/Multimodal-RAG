@@ -1,4 +1,5 @@
 import logging
+from src.config import Config
 from src.retriever.chroma_client import get_chroma_collection
 from src.retriever.embeddings import EmbeddingClient
 import shelve
@@ -83,7 +84,10 @@ if __name__ == "__main__":
     summary_path = summary_files[0]
 
     # connect to chroma
-    client, collection = get_chroma_collection(collection_name="mmrag_demo")
+    client, collection = get_chroma_collection(
+        collection_name="mmrag_demo",
+        persist_dir=str(Config.CHROMA_PERSIST_DIR),
+    )
 
     emb = EmbeddingClient()
 

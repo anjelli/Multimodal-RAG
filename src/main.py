@@ -33,7 +33,10 @@ def main():
     if args.question:
         logging.info("Running query against vectorstore")
         embedder = EmbeddingClient()
-        client, collection = get_chroma_collection()
+        client, collection = get_chroma_collection(
+            collection_name="mmrag_demo",
+            persist_dir=args.persist_dir,
+        )
         retriever = RetrieverPipeline(embedding_model=embedder, vectorstore=collection)
         results = retriever.retrieve(args.question, k=args.top_k)
         for idx, result in enumerate(results, start=1):
