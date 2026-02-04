@@ -24,48 +24,21 @@ class IngestionPipeline:
         }
 
     def load_data(self):
-        import shutil
-        try:
-            from unstructured.partition.pdf import partition_pdf
-        except ModuleNotFoundError:
-            logging.warning("unstructured not installed; falling back to pdfplumber")
-            self._load_data_with_pdfplumber()
-            return
+        from unstructured.partition.pdf import partition_pdf
 
         logging.info("Loading PDF and extracting elements from %s", self.source)
-        # If images extraction is requested, ensure pdfinfo (poppler) is available on PATH.
-        if self.extract_images:
-            if shutil.which("pdfinfo") is None:
-                logging.warning("poppler not found on PATH; falling back to pdfplumber for text+tables")
-                self._load_data_with_pdfplumber()
-                return
-
-        # call partition_pdf; skip image extraction if requested
-        # When images are disabled, use 'fast' strategy (text-only, no layout/Poppler needed).
-        # When images are enabled, use 'hi_res' for full table/image extraction.
-        strategy = "hi_res" if self.extract_images else "fast"
 
         kwargs = dict(
             filename=self.source,
-            strategy=strategy,
-            extract_images_in_pdf=bool(self.extract_images),
+            strategy="hi_res",
+            extract_images_in_pdf=True,
+            infer_table_structure=True,
             extract_image_block_types=["Image", "Table"],
             extract_image_block_to_payload=False,
+            extract_image_block_output_dir=self.extracted_dir,
         )
-        if self.extract_images:
-            kwargs["extract_image_block_output_dir"] = self.extracted_dir
 
-        try:
-            self.raw_elements = partition_pdf(**kwargs)
-        except Exception as e:
-            # If hi_res fails (e.g., Poppler missing), unstructured API mismatch, or OCR failure, fall back to pdfplumber
-            err = str(e).lower()
-            ocr_failure = "tesseract" in err or "hocr" in err or "tess_" in err or "ocr" in err
-            if "pdfinfo" in err or "poppler" in err or "unexpected keyword argument" in err or ocr_failure:
-                logging.warning("partition_pdf failed; falling back to pdfplumber: %s", e)
-                self._load_data_with_pdfplumber()
-            else:
-                raise
+        self.raw_elements = partition_pdf(**kwargs)
 
     def _load_data_with_pdfplumber(self):
         """Fallback: extract text, tables, and images using pdfplumber (no system dependencies)."""
