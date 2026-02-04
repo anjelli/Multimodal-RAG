@@ -16,27 +16,19 @@ def get_chroma_collection(collection_name: str, persist_dir: str):
     # Try older and newer client constructors to be compatible across chroma versions
     client = None
     try:
-        if hasattr(chromadb, "PersistentClient"):
-            client = chromadb.PersistentClient(path=str(persist_dir))
-        else:
-            raise AttributeError("PersistentClient not available")
+        from chromadb.config import Settings
+
+        client = chromadb.Client(Settings(chroma_db_impl="duckdb+parquet", persist_directory=str(persist_dir)))
     except Exception:
         try:
-            from chromadb.config import Settings
-
-            client = chromadb.Client(
-                Settings(chroma_db_impl="duckdb+parquet", persist_directory=str(persist_dir))
-            )
+            # newer chroma versions accept simple kwargs
+            client = chromadb.Client(persist_directory=str(persist_dir))
         except Exception:
             try:
-                # newer chroma versions accept simple kwargs
-                client = chromadb.Client(persist_directory=str(persist_dir))
-            except Exception:
-                try:
-                    # last resort: default constructor
-                    client = chromadb.Client()
-                except Exception as e:
-                    raise RuntimeError("Failed to construct a Chroma client: %s" % e)
+                # last resort: default constructor
+                client = chromadb.Client()
+            except Exception as e:
+                raise RuntimeError("Failed to construct a Chroma client: %s" % e)
 
     # create or get collection
     try:
