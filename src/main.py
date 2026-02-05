@@ -33,31 +33,12 @@ def main():
     if args.question:
         logging.info("Running query against vectorstore")
         embedder = EmbeddingClient()
-        from src.llm_output.pipeline import LLMOutputGenerator
-        from src.llm_output.adapter import ModelClient
-
         client, collection = get_chroma_collection(
             collection_name="mmrag_demo",
             persist_dir=args.persist_dir,
         )
         retriever = RetrieverPipeline(embedding_model=embedder, vectorstore=collection)
         results = retriever.retrieve(args.question, k=args.top_k)
-        context_texts = []
-        context_images = []
-        for result in results:
-            content = result.get("content")
-            if isinstance(content, dict) and content.get("path"):
-                context_images.append({"path": content.get("path"), "summary": result.get("summary")})
-            else:
-                context_texts.append(content if content is not None else result.get("summary"))
-
-        prompt_inputs = {
-            "context": {"texts": context_texts, "images": context_images},
-            "question": args.question,
-        }
-        messages = LLMOutputGenerator.img_prompt_func(prompt_inputs)
-        answer = ModelClient().invoke(messages)
-        print("\nAnswer:\n", answer)
         for idx, result in enumerate(results, start=1):
             print(f"[{idx}] score={result.get('distance')}")
             print(f"summary: {result.get('summary')}")
@@ -92,36 +73,17 @@ def main():
     ingestion.process_data()
     data = ingestion.get_processed_data()
 
-    def split_sentences(text: str):
-        from nltk.tokenize import sent_tokenize
-        import nltk
-
-        try:
-            return [s.strip() for s in sent_tokenize(text) if len(s.strip()) > 20]
-        except LookupError:
-            nltk.download("punkt", quiet=True)
-            return [s.strip() for s in sent_tokenize(text) if len(s.strip()) > 20]
-
     text_cats = ["Title", "NarrativeText", "Text", "ListItem"]
     text_summaries = []
     text_contents = []
-    import re
-
     for cat in text_cats:
         for item in data.get(cat, []):
             text = item.get("text") if isinstance(item, dict) else str(item)
             text = str(text).strip()
             if not text:
                 continue
-            for sentence in split_sentences(text):
-                metadata = {
-                    "section": cat,
-                    "is_sentence": True,
-                    "contains_number": bool(re.search(r"\d", sentence)),
-                    "contains_person": bool(re.search(r"\b(Mr\.|Ms\.|Mrs\.|Dr\.|Chairman|CEO)\b", sentence)),
-                }
-                text_summaries.append(sentence[:400])
-                text_contents.append({"text": sentence, "metadata": metadata})
+            text_summaries.append(text[:400])
+            text_contents.append(text)
 
     table_summaries = []
     table_contents = []

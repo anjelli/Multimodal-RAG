@@ -113,13 +113,6 @@ class RetrieverPipeline:
         if not hasattr(self.embedding_model, "embed_texts"):
             raise RuntimeError("Embedding model does not support embed_texts.")
 
-        normalized = query.strip()
-        lowered = normalized.lower()
-        words = [w for w in re.split(r"\W+", lowered) if len(w) > 2]
-        keyword_set = set(words)
-        contains_number = bool(re.search(r"\d", normalized))
-        contains_person = bool(re.search(r"\b(Mr\.|Ms\.|Mrs\.|Dr\.|Chairman|CEO)\b", normalized))
-
         query_embedding = self.embedding_model.embed_texts([query])
         query_fn = getattr(self.vectorstore, "query", None)
         if not callable(query_fn):
@@ -131,25 +124,11 @@ class RetrieverPipeline:
             count = "unknown"
         logging.info("Collection count before query: %s", count)
 
-        where = {"is_sentence": True}
-        if contains_number:
-            where["contains_number"] = True
-        if contains_person:
-            where["contains_person"] = True
-
-        try:
-            result = query_fn(
-                query_embeddings=query_embedding,
-                n_results=k,
-                include=["ids", "documents", "metadatas", "distances"],
-                where=where,
-            )
-        except TypeError:
-            result = query_fn(
-                query_embeddings=query_embedding,
-                n_results=k,
-                include=["ids", "documents", "metadatas", "distances"],
-            )
+        result = query_fn(
+            query_embeddings=query_embedding,
+            n_results=k,
+            include=["ids", "documents", "metadatas", "distances"],
+        )
 
         ids = (result.get("ids") or [[]])[0]
         docs = (result.get("documents") or [[]])[0]
