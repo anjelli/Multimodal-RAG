@@ -24,52 +24,28 @@ class IngestionPipeline:
         }
 
     def load_data(self):
-        import shutil
-        try:
-            from unstructured.partition.pdf import partition_pdf
-        except ModuleNotFoundError:
-            logging.warning("unstructured not installed; falling back to pdfplumber")
-            self._load_data_with_pdfplumber()
-            return
+        from unstructured.partition.pdf import partition_pdf
 
         logging.info("Loading PDF and extracting elements from %s", self.source)
-        # If images extraction is requested, ensure pdfinfo (poppler) is available on PATH.
-        if self.extract_images:
-            if shutil.which("pdfinfo") is None:
-                logging.warning("poppler not found on PATH; falling back to pdfplumber for text+tables")
-                self._load_data_with_pdfplumber()
-                return
-
-        # call partition_pdf; skip image extraction if requested
-        # When images are disabled, use 'fast' strategy (text-only, no layout/Poppler needed).
-        # When images are enabled, use 'hi_res' for full table/image extraction.
-        strategy = "hi_res" if self.extract_images else "fast"
 
         kwargs = dict(
             filename=self.source,
-            strategy=strategy,
-            extract_images_in_pdf=bool(self.extract_images),
+            strategy="hi_res",
+            extract_images_in_pdf=True,
+            infer_table_structure=True,
             extract_image_block_types=["Image", "Table"],
             extract_image_block_to_payload=False,
+            extract_image_block_output_dir=self.extracted_dir,
         )
-        if self.extract_images:
-            kwargs["extract_image_block_output_dir"] = self.extracted_dir
 
-        try:
-            self.raw_elements = partition_pdf(**kwargs)
-        except Exception as e:
-            # If hi_res fails (e.g., Poppler missing), fall back to pdfplumber
-            if "pdfinfo" in str(e) or "poppler" in str(e).lower():
-                logging.warning("partition_pdf failed due to Poppler; falling back to pdfplumber")
-                self._load_data_with_pdfplumber()
-            else:
-                raise
+        self.raw_elements = partition_pdf(**kwargs)
 
     def _load_data_with_pdfplumber(self):
         """Fallback: extract text, tables, and images using pdfplumber (no system dependencies)."""
         from src.ingestion.pdfplumber_extract import (
             extract_with_pdfplumber,
             extract_images_with_pdfplumber,
+            extract_images_with_pymupdf,
             save_tables_as_csvs,
         )
 
@@ -82,7 +58,10 @@ class IngestionPipeline:
         if tables:
             csv_paths = save_tables_as_csvs(tables, "processed_data", self.source)
             for csv_path in csv_paths:
-                self.processed_data["Table"].append({"csv_path": csv_path})
+                if isinstance(csv_path, dict):
+                    self.processed_data["Table"].append(csv_path)
+                else:
+                    self.processed_data["Table"].append({"csv_path": csv_path})
 
         # Convert text blocks into elements (mimic unstructured output)
         class TextElement:
@@ -107,6 +86,11 @@ class IngestionPipeline:
 
         if self.extract_images:
             image_paths = extract_images_with_pdfplumber(self.source, self.extracted_dir)
+            if not image_paths:
+                try:
+                    image_paths = extract_images_with_pymupdf(self.source, self.extracted_dir)
+                except Exception as exc:
+                    logging.warning("PyMuPDF image extraction unavailable: %s", exc)
             for path in image_paths:
                 self.raw_elements.append(ImageElement(path))
 

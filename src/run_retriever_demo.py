@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 import logging
 
+from src.config import Config
 from src.retriever.embeddings import EmbeddingClient
 from src.retriever.chroma_client import get_chroma_collection
 from src.retriever.pipeline import RetrieverPipeline
@@ -69,7 +70,10 @@ def main():
 
     emb = EmbeddingClient()
     try:
-        client, collection = get_chroma_collection(collection_name="mmrag_demo")
+        client, collection = get_chroma_collection(
+            collection_name="mmrag_demo",
+            persist_dir=str(Config.CHROMA_PERSIST_DIR),
+        )
         vectorstore = collection
     except Exception as e:
         raise SystemExit("Failed to create Chroma collection: %s" % e)

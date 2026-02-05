@@ -107,7 +107,10 @@ def run_once(source_pdf: str = None):
     logging.info("Embedding %d documents using backend %s", len(docs), embedder.backend)
     embeddings = embedder.embed_texts(docs)
 
-    client, collection = get_chroma_collection()
+    client, collection = get_chroma_collection(
+        collection_name="mmrag_demo",
+        persist_dir=str(Config.CHROMA_PERSIST_DIR),
+    )
     retriever = RetrieverPipeline(embedding_model=embedder, vectorstore=collection)
     text_contents = [
         {"text": item["text"], "metadata": item["metadata"], "type": item["metadata"].get("type", "text")}

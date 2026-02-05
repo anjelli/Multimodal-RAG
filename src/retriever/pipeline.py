@@ -64,6 +64,12 @@ class RetrieverPipeline:
                 if embeddings is not None:
                     kwargs["embeddings"] = embeddings
                 add_fn(**kwargs)
+                logging.info("Added %s documents to collection", len(summaries))
+                try:
+                    count = self.vectorstore.count()
+                except Exception:
+                    count = "unknown"
+                logging.info("Collection count after ingestion: %s", count)
                 # try persist on client if available (chroma client may be attached)
                 client = getattr(self.vectorstore, "client", None)
                 if client is not None:
@@ -75,6 +81,12 @@ class RetrieverPipeline:
                 # fallback if add signature different
                 try:
                     self.vectorstore.add(summaries)
+                    logging.info("Added %s documents to collection", len(summaries))
+                    try:
+                        count = self.vectorstore.count()
+                    except Exception:
+                        count = "unknown"
+                    logging.info("Collection count after ingestion: %s", count)
                 except Exception:
                     logging.exception("Failed to add documents to vectorstore")
         else:
@@ -82,6 +94,12 @@ class RetrieverPipeline:
             docs = [Document(page_content=s, metadata=m) for s, m in zip(summaries, metadatas)]
             try:
                 self.vectorstore.add_documents(docs)
+                logging.info("Added %s documents to collection", len(summaries))
+                try:
+                    count = self.vectorstore.count()
+                except Exception:
+                    count = "unknown"
+                logging.info("Collection count after ingestion: %s", count)
                 persist = getattr(self.vectorstore, "persist", None)
                 if callable(persist):
                     persist()
@@ -94,10 +112,40 @@ class RetrieverPipeline:
         if not hasattr(self.embedding_model, "embed_texts"):
             raise RuntimeError("Embedding model does not support embed_texts.")
 
+        normalized = query.strip()
+        if normalized.lower().startswith("who is"):
+            name = normalized[6:].strip()
+            if name:
+                matches = []
+                try:
+                    with self._open_docstore() as ds:
+                        for _id, content in ds.items():
+                            text = str(content)
+                            if name.lower() in text.lower():
+                                matches.append(
+                                    {
+                                        "id": _id,
+                                        "summary": text[:400],
+                                        "metadata": {self.id_key: _id},
+                                        "content": content,
+                                        "distance": 0.0,
+                                    }
+                                )
+                except Exception:
+                    logging.exception("Failed to keyword-scan docstore %s", self.docstore_path)
+                if matches:
+                    return matches[:k]
+
         query_embedding = self.embedding_model.embed_texts([query])
         query_fn = getattr(self.vectorstore, "query", None)
         if not callable(query_fn):
             raise RuntimeError("Vectorstore does not support query().")
+
+        try:
+            count = self.vectorstore.count()
+        except Exception:
+            count = "unknown"
+        logging.info("Collection count before query: %s", count)
 
         result = query_fn(
             query_embeddings=query_embedding,
