@@ -112,30 +112,6 @@ class RetrieverPipeline:
         if not hasattr(self.embedding_model, "embed_texts"):
             raise RuntimeError("Embedding model does not support embed_texts.")
 
-        normalized = query.strip()
-        if normalized.lower().startswith("who is"):
-            name = normalized[6:].strip()
-            if name:
-                matches = []
-                try:
-                    with self._open_docstore() as ds:
-                        for _id, content in ds.items():
-                            text = str(content)
-                            if name.lower() in text.lower():
-                                matches.append(
-                                    {
-                                        "id": _id,
-                                        "summary": text[:400],
-                                        "metadata": {self.id_key: _id},
-                                        "content": content,
-                                        "distance": 0.0,
-                                    }
-                                )
-                except Exception:
-                    logging.exception("Failed to keyword-scan docstore %s", self.docstore_path)
-                if matches:
-                    return matches[:k]
-
         query_embedding = self.embedding_model.embed_texts([query])
         query_fn = getattr(self.vectorstore, "query", None)
         if not callable(query_fn):

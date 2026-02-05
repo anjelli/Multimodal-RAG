@@ -73,11 +73,6 @@ def main():
     ingestion.process_data()
     data = ingestion.get_processed_data()
 
-    def split_sentences(text: str):
-        import re
-
-        return [s.strip() for s in re.split(r"(?<=[.!?])\s+", text) if len(s.strip()) > 20]
-
     text_cats = ["Title", "NarrativeText", "Text", "ListItem"]
     text_summaries = []
     text_contents = []
@@ -87,9 +82,8 @@ def main():
             text = str(text).strip()
             if not text:
                 continue
-            for sentence in split_sentences(text):
-                text_summaries.append(sentence[:400])
-                text_contents.append(sentence)
+            text_summaries.append(text[:400])
+            text_contents.append(text)
 
     table_summaries = []
     table_contents = []
