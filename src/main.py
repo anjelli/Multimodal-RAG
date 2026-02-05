@@ -10,7 +10,7 @@ from src.retriever.pipeline import RetrieverPipeline
 
 
 def setup_logging(level=logging.INFO):
-    logging.basicConfig(level=level, format="%(asctime)s %(levelname)s %(message)s")
+    logging.basicConfig(level=level, format="%(asctime)s %(levelname)s %(message)s", force=True)
 
 
 def parse_args():
@@ -33,7 +33,10 @@ def main():
     if args.question:
         logging.info("Running query against vectorstore")
         embedder = EmbeddingClient()
-        client, collection = get_chroma_collection()
+        client, collection = get_chroma_collection(
+            collection_name="mmrag_demo",
+            persist_dir=args.persist_dir,
+        )
         retriever = RetrieverPipeline(embedding_model=embedder, vectorstore=collection)
         results = retriever.retrieve(args.question, k=args.top_k)
         for idx, result in enumerate(results, start=1):
@@ -70,7 +73,64 @@ def main():
     ingestion.process_data()
     data = ingestion.get_processed_data()
 
-    # Note: embedding/vectorstore setup is left to user configuration.
+    def split_sentences(text: str):
+        import re
+
+        return [s.strip() for s in re.split(r"(?<=[.!?])\s+", text) if len(s.strip()) > 20]
+
+    text_cats = ["Title", "NarrativeText", "Text", "ListItem"]
+    text_summaries = []
+    text_contents = []
+    for cat in text_cats:
+        for item in data.get(cat, []):
+            text = item.get("text") if isinstance(item, dict) else str(item)
+            text = str(text).strip()
+            if not text:
+                continue
+            for sentence in split_sentences(text):
+                text_summaries.append(sentence[:400])
+                text_contents.append(sentence)
+
+    table_summaries = []
+    table_contents = []
+    for table in data.get("Table", []):
+        if isinstance(table, dict) and table.get("csv_path"):
+            summary = f"Table {Path(table['csv_path']).name} shape={table.get('shape')}"
+            table_summaries.append(summary)
+            table_contents.append(table)
+        else:
+            table_text = str(table.get("raw") if isinstance(table, dict) else table)
+            table_summaries.append(table_text[:400])
+            table_contents.append(table)
+
+    image_summaries = []
+    image_contents = []
+    for image in data.get("Image", []):
+        if isinstance(image, dict) and image.get("path"):
+            summary = f"Image at {image.get('path')}"
+            image_summaries.append(summary)
+            image_contents.append(image)
+        else:
+            image_text = str(image)
+            image_summaries.append(image_text[:200])
+            image_contents.append(image)
+
+    if not (text_summaries or table_summaries or image_summaries):
+        raise SystemExit("No documents found to index after ingestion")
+
+    embedder = EmbeddingClient()
+    client, collection = get_chroma_collection(
+        collection_name="mmrag_demo",
+        persist_dir=args.persist_dir,
+    )
+    retriever = RetrieverPipeline(embedding_model=embedder, vectorstore=collection)
+    if text_summaries:
+        retriever.add_documents(text_summaries, text_contents)
+    if table_summaries:
+        retriever.add_documents(table_summaries, table_contents)
+    if image_summaries:
+        retriever.add_documents(image_summaries, image_contents)
+
     print("Ingestion complete. Processed keys:", list(data.keys()))
 
 
