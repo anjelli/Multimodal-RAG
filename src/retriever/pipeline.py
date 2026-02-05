@@ -2,6 +2,7 @@ from typing import List, Dict, Any, Optional
 import uuid
 import logging
 import shelve
+import re
 from src.config import Config
 
 
@@ -154,6 +155,20 @@ class RetrieverPipeline:
                     "distance": dist,
                 }
             )
+        def keyword_overlap(text: str) -> int:
+            if not text:
+                return 0
+            tokens = [w for w in re.split(r"\W+", str(text).lower()) if len(w) > 2]
+            return len(keyword_set.intersection(tokens))
+
+        def rank_key(item: Dict[str, Any]):
+            text = item.get("content") or item.get("summary") or ""
+            overlap = keyword_overlap(text)
+            dist = item.get("distance")
+            dist_val = dist if dist is not None else 1.0
+            return (-overlap, dist_val)
+
+        results.sort(key=rank_key)
         return results
 
     def create_multi_vector_retriever(self, text_summaries, texts, table_summaries, tables, image_summaries, images):
