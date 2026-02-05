@@ -2,6 +2,7 @@ from typing import List, Dict, Any, Optional
 import uuid
 import logging
 import shelve
+import re
 from src.config import Config
 
 
@@ -113,28 +114,11 @@ class RetrieverPipeline:
             raise RuntimeError("Embedding model does not support embed_texts.")
 
         normalized = query.strip()
-        if normalized.lower().startswith("who is"):
-            name = normalized[6:].strip()
-            if name:
-                matches = []
-                try:
-                    with self._open_docstore() as ds:
-                        for _id, content in ds.items():
-                            text = str(content)
-                            if name.lower() in text.lower():
-                                matches.append(
-                                    {
-                                        "id": _id,
-                                        "summary": text[:400],
-                                        "metadata": {self.id_key: _id},
-                                        "content": content,
-                                        "distance": 0.0,
-                                    }
-                                )
-                except Exception:
-                    logging.exception("Failed to keyword-scan docstore %s", self.docstore_path)
-                if matches:
-                    return matches[:k]
+        lowered = normalized.lower()
+        words = [w for w in re.split(r"\W+", lowered) if len(w) > 2]
+        keyword_set = set(words)
+        contains_number = bool(re.search(r"\d", normalized))
+        contains_person = bool(re.search(r"\b(Mr\.|Ms\.|Mrs\.|Dr\.|Chairman|CEO)\b", normalized))
 
         query_embedding = self.embedding_model.embed_texts([query])
         query_fn = getattr(self.vectorstore, "query", None)
@@ -147,11 +131,25 @@ class RetrieverPipeline:
             count = "unknown"
         logging.info("Collection count before query: %s", count)
 
-        result = query_fn(
-            query_embeddings=query_embedding,
-            n_results=k,
-            include=["ids", "documents", "metadatas", "distances"],
-        )
+        where = {"is_sentence": True}
+        if contains_number:
+            where["contains_number"] = True
+        if contains_person:
+            where["contains_person"] = True
+
+        try:
+            result = query_fn(
+                query_embeddings=query_embedding,
+                n_results=k,
+                include=["ids", "documents", "metadatas", "distances"],
+                where=where,
+            )
+        except TypeError:
+            result = query_fn(
+                query_embeddings=query_embedding,
+                n_results=k,
+                include=["ids", "documents", "metadatas", "distances"],
+            )
 
         ids = (result.get("ids") or [[]])[0]
         docs = (result.get("documents") or [[]])[0]
@@ -178,6 +176,20 @@ class RetrieverPipeline:
                     "distance": dist,
                 }
             )
+        def keyword_overlap(text: str) -> int:
+            if not text:
+                return 0
+            tokens = [w for w in re.split(r"\W+", str(text).lower()) if len(w) > 2]
+            return len(keyword_set.intersection(tokens))
+
+        def rank_key(item: Dict[str, Any]):
+            text = item.get("content") or item.get("summary") or ""
+            overlap = keyword_overlap(text)
+            dist = item.get("distance")
+            dist_val = dist if dist is not None else 1.0
+            return (-overlap, dist_val)
+
+        results.sort(key=rank_key)
         return results
 
     def create_multi_vector_retriever(self, text_summaries, texts, table_summaries, tables, image_summaries, images):

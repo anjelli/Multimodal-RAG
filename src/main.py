@@ -93,13 +93,20 @@ def main():
     data = ingestion.get_processed_data()
 
     def split_sentences(text: str):
-        import re
+        from nltk.tokenize import sent_tokenize
+        import nltk
 
-        return [s.strip() for s in re.split(r"(?<=[.!?])\s+", text) if len(s.strip()) > 20]
+        try:
+            return [s.strip() for s in sent_tokenize(text) if len(s.strip()) > 20]
+        except LookupError:
+            nltk.download("punkt", quiet=True)
+            return [s.strip() for s in sent_tokenize(text) if len(s.strip()) > 20]
 
     text_cats = ["Title", "NarrativeText", "Text", "ListItem"]
     text_summaries = []
     text_contents = []
+    import re
+
     for cat in text_cats:
         for item in data.get(cat, []):
             text = item.get("text") if isinstance(item, dict) else str(item)
@@ -107,8 +114,14 @@ def main():
             if not text:
                 continue
             for sentence in split_sentences(text):
+                metadata = {
+                    "section": cat,
+                    "is_sentence": True,
+                    "contains_number": bool(re.search(r"\d", sentence)),
+                    "contains_person": bool(re.search(r"\b(Mr\.|Ms\.|Mrs\.|Dr\.|Chairman|CEO)\b", sentence)),
+                }
                 text_summaries.append(sentence[:400])
-                text_contents.append(sentence)
+                text_contents.append({"text": sentence, "metadata": metadata})
 
     table_summaries = []
     table_contents = []
