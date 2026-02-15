@@ -1,85 +1,83 @@
 # Multimodal RAG Project
 
-This project implements a multimodal Retrieval-Augmented Generation (RAG) architecture. It is designed to handle various data types and facilitate efficient data ingestion and retrieval processes.
+A PDF-focused **multimodal Retrieval-Augmented Generation (RAG)** prototype.
 
-## Project Structure
+It ingests PDFs, extracts text/tables/images, indexes summaries in Chroma, stores original payloads in a local docstore, retrieves relevant context, and optionally sends context to an LLM for final answers.
 
-```
-multimodal-rag-project
-├── src
-│   ├── ingestion
-│   │   ├── __init__.py
-│   │   └── pipeline.py
-│   ├── retriever
-│   │   ├── __init__.py
-│   │   └── pipeline.py
-│   ├── llm_output
-│   │   ├── __init__.py
-│   │   └── pipeline.py
-│   ├── main.py
-│   └── image_processing
-│       └── pipeline.py
-├── requirements.txt
-└── README.md
-```
+## Python and environment
 
-## Installation
-
-To set up the project, clone the repository and install the required dependencies:
+- **Recommended Python**: `3.10` or `3.11`
+- Install dependencies:
 
 ```bash
 pip install -r requirements.txt
 ```
 
-If you see `ModuleNotFoundError: No module named 'pandas'` while running the pipeline, make sure the dependencies are installed (the `requirements.txt` file includes `pandas`) or install it explicitly:
+- Required environment variables:
+  - `OPENAI_API_KEY` (required only when you want OpenAI embeddings/LLM calls)
+- Optional directory overrides:
+  - `MMRAG_DATA_DIR`, `MMRAG_EXTRACTED_DIR`, `MMRAG_PROCESSED_DIR`, `MMRAG_CHROMA_DIR`
+- `--openai-key` can be provided to `src.main` and is applied for both embeddings and LLM answer generation.
+
+## Architecture (compact)
+
+```mermaid
+flowchart LR
+    A[PDF files in data/] --> B[IngestionPipeline]
+    B --> C[Text / Table / Image elements]
+    C --> D[Summaries + metadata]
+    D --> E[EmbeddingClient\n(OpenAI | sbert | hash)]
+    E --> F[Chroma collection]
+    C --> G[Shelve docstore\nprocessed_data/docstore.db]
+    H[User question] --> I[RetrieverPipeline.query]
+    I --> F
+    I --> G
+    I --> J[Retrieved summaries + full content]
+    J --> K[LLMOutputGenerator + ModelClient]
+    K --> L[Final answer + sources]
+```
+
+## Runbook
+
+### 1) Ingest a PDF into Chroma
 
 ```bash
-pip install pandas
+python -m src.main \
+  --source data/<your_report>.pdf \
+  --persist-dir chroma_db \
+  --extracted-dir extracted_data
 ```
 
-Usage (CLI):
+If Poppler/image tooling is unavailable, skip image extraction:
 
+```bash
+MMRAG_SKIP_IMAGES=1 python -m src.main --source data/<your_report>.pdf
+# or
+python -m src.main --source data/<your_report>.pdf --no-images
 ```
-python -m src.main --source path/to/report.pdf --persist-dir chroma_db --extracted-dir extracted_data
+
+### 2) Query indexed content (+ generated answer)
+
+```bash
+python -m src.main --question "What are the net-zero goals?" --top-k 4 --openai-key "$OPENAI_API_KEY"
 ```
 
-Environment variables:
-- `OPENAI_API_KEY` — required for embedding/LLM calls when used.
-- `MMRAG_DATA_DIR`, `MMRAG_EXTRACTED_DIR`, `MMRAG_PROCESSED_DIR`, `MMRAG_CHROMA_DIR` — optional directory overrides.
+### 3) End-to-end smoke run
 
-OS prerequisites
-- Poppler (required by `pdf2image` / `unstructured` to convert PDFs to images):
-	- macOS: `brew install poppler`
-	- Debian/Ubuntu: `sudo apt-get install poppler-utils`
-	- Windows: download a build from https://github.com/oschwartz10612/poppler-windows/releases and add the `Library\bin` folder to your `PATH` (or install via Chocolatey: `choco install poppler`).
+```bash
+python -m src.integration.run_integration
+```
 
-	If you cannot install Poppler, you can skip image extraction by setting the environment variable `MMRAG_SKIP_IMAGES=1` before running the integration, or by passing `--no-images` to `src/main.py`.
+## Project structure
 
+- `src/ingestion/`: PDF parsing and normalization.
+- `src/retriever/`: embeddings, Chroma client, retrieval logic.
+- `src/llm_output/`: prompt construction and model adapter.
+- `src/integration/run_integration.py`: end-to-end integration runner.
+- `src/main.py`: CLI entrypoint for ingestion and querying.
 
-## Usage and Output Generation
+## Notes
 
-1. **Ingestion Pipeline**: Use the `IngestionPipeline` class from `src/ingestion/pipeline.py` to load, process, and save data.
-   
-
-2. **Retriever Pipeline**: Use the `RetrieverPipeline` class from `src/retriever/pipeline.py` to retrieve and format results from the stored data.
-
-
-3. **LLM Output Generation**: Display the original charts/tables/images alongside the LLM's output.Below is the output
-
-
-**Get both the LLM answer and the source images and texts that the model used**
-
-
-![get both the LLM answer and the source images and texts that the model used!](asset/new_result.png)
-
-
-**source image**
-![source image](asset/result_image.png)
-
-
-**Get both the LLM answer and the source images and texts that the model used**
-![get both the LLM answer and the source images and texts that the model used!](asset/result2.png)
-
-
-**source image**
-![source image](asset/result2_image.png)
+- Ingestion now automatically falls back to `pdfplumber`/`PyMuPDF` extraction when `unstructured` fails.
+- Retrieved items include both vector-match summaries and full stored content payloads.
+- Local runtime artifacts (`__pycache__`, logs, generated db folders) are gitignored.
