@@ -1,0 +1,22 @@
+# Python caches/build artifacts
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Local runtime outputs
+integration.log
+processed_data/
+extracted_data/
+chroma_db/
+
+# Notebook / OS noise
+.ipynb_checkpoints/
+.DS_Store

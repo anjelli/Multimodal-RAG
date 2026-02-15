@@ -20,8 +20,6 @@ class RetrieverPipeline:
         return shelve.open(self.docstore_path)
 
     def add_documents(self, summaries: List[str], contents: List[Any], embeddings: Optional[List[List[float]]] = None):
-        from langchain_core.documents import Document
-
         if len(summaries) != len(contents):
             raise ValueError("summaries and contents must be same length")
 
@@ -92,6 +90,8 @@ class RetrieverPipeline:
                     logging.exception("Failed to add documents to vectorstore")
         else:
             # fallback for older vectorstore APIs (langchain-style)
+            from langchain_core.documents import Document
+
             docs = [Document(page_content=s, metadata=m) for s, m in zip(summaries, metadatas)]
             try:
                 self.vectorstore.add_documents(docs)
@@ -155,8 +155,14 @@ class RetrieverPipeline:
                     "distance": dist,
                 }
             )
+        keyword_set = {
+            w
+            for w in re.split(r"\W+", str(query).lower())
+            if len(w) > 2
+        }
+
         def keyword_overlap(text: str) -> int:
-            if not text:
+            if not text or not keyword_set:
                 return 0
             tokens = [w for w in re.split(r"\W+", str(text).lower()) if len(w) > 2]
             return len(keyword_set.intersection(tokens))

@@ -24,21 +24,29 @@ class IngestionPipeline:
         }
 
     def load_data(self):
-        from unstructured.partition.pdf import partition_pdf
-
         logging.info("Loading PDF and extracting elements from %s", self.source)
+        try:
+            from unstructured.partition.pdf import partition_pdf
 
-        kwargs = dict(
-            filename=self.source,
-            strategy="hi_res",
-            extract_images_in_pdf=True,
-            infer_table_structure=True,
-            extract_image_block_types=["Image", "Table"],
-            extract_image_block_to_payload=False,
-            extract_image_block_output_dir=self.extracted_dir,
-        )
+            kwargs = dict(
+                filename=self.source,
+                strategy="hi_res",
+                extract_images_in_pdf=self.extract_images,
+                infer_table_structure=True,
+                extract_image_block_types=["Image", "Table"],
+                extract_image_block_to_payload=False,
+                extract_image_block_output_dir=self.extracted_dir,
+            )
 
-        self.raw_elements = partition_pdf(**kwargs)
+            self.raw_elements = partition_pdf(**kwargs)
+            if not self.raw_elements:
+                raise RuntimeError("unstructured returned no elements")
+        except Exception as exc:
+            logging.warning(
+                "Unstructured PDF extraction failed (%s). Falling back to pdfplumber/PyMuPDF extraction.",
+                exc,
+            )
+            self._load_data_with_pdfplumber()
 
     def _load_data_with_pdfplumber(self):
         """Fallback: extract text, tables, and images using pdfplumber (no system dependencies)."""
@@ -91,8 +99,10 @@ class IngestionPipeline:
                     image_paths = extract_images_with_pymupdf(self.source, self.extracted_dir)
                 except Exception as exc:
                     logging.warning("PyMuPDF image extraction unavailable: %s", exc)
-            for path in image_paths:
-                self.raw_elements.append(ImageElement(path))
+            for path_info in image_paths:
+                image_path = path_info.get("path") if isinstance(path_info, dict) else path_info
+                if image_path:
+                    self.raw_elements.append(ImageElement(image_path))
 
     def _save_table_df(self, df: pd.DataFrame, prefix: str, idx: int) -> str:
         out_dir = Path("processed_data")
