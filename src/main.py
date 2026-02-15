@@ -30,6 +30,9 @@ def main():
     args = parse_args()
     Config.ensure_dirs()
 
+    if args.openai_key:
+        os.environ["OPENAI_API_KEY"] = args.openai_key
+
     if args.question:
         logging.info("Running query against vectorstore")
         embedder = EmbeddingClient()
@@ -44,6 +47,26 @@ def main():
             print(f"summary: {result.get('summary')}")
             print(f"metadata: {result.get('metadata')}")
             print(f"content: {result.get('content')}\n")
+
+        from src.llm_output.pipeline import LLMOutputGenerator
+        from src.llm_output.adapter import ModelClient
+
+        context_texts = []
+        context_images = []
+        for r in results:
+            content = r.get("content")
+            if isinstance(content, dict) and content.get("path"):
+                context_images.append({"path": content.get("path"), "summary": r.get("summary")})
+            elif content is not None:
+                context_texts.append(str(content))
+            elif r.get("summary"):
+                context_texts.append(str(r.get("summary")))
+
+        messages = LLMOutputGenerator.img_prompt_func(
+            {"context": {"texts": context_texts, "images": context_images}, "question": args.question}
+        )
+        answer = ModelClient().invoke(messages)
+        print("LLM answer:\n", answer)
         return
 
     source = args.source

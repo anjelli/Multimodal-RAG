@@ -11,12 +11,20 @@ class EmbeddingClient:
         self.api_key = os.environ.get("OPENAI_API_KEY")
         self.model = model or os.environ.get("MMRAG_EMBEDDING_MODEL", "text-embedding-3-small")
         self._client = None
+        self._openai_mode = None
         if self.api_key:
             try:
                 import openai
 
-                openai.api_key = self.api_key
-                self._client = openai
+                if hasattr(openai, "OpenAI"):
+                    # OpenAI SDK v1+
+                    self._client = openai.OpenAI(api_key=self.api_key)
+                    self._openai_mode = "v1"
+                else:
+                    # OpenAI SDK legacy
+                    openai.api_key = self.api_key
+                    self._client = openai
+                    self._openai_mode = "legacy"
                 self.backend = "openai"
             except Exception:
                 self._client = None
@@ -47,8 +55,12 @@ class EmbeddingClient:
                 # retry logic
                 for attempt in range(4):
                     try:
-                        resp = self._client.Embedding.create(input=chunk, model=self.model, request_timeout=30)
-                        embeds.extend([e["embedding"] for e in resp["data"]])
+                        if self._openai_mode == "v1":
+                            resp = self._client.embeddings.create(input=chunk, model=self.model)
+                            embeds.extend([e.embedding for e in resp.data])
+                        else:
+                            resp = self._client.Embedding.create(input=chunk, model=self.model, request_timeout=30)
+                            embeds.extend([e["embedding"] for e in resp["data"]])
                         break
                     except Exception as e:
                         wait = (2 ** attempt) * 0.5

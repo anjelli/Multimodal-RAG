@@ -28,6 +28,7 @@ class ModelClient:
         self.api_key = os.environ.get("OPENAI_API_KEY")
         self.model = model or os.environ.get("MMRAG_LLM_MODEL", "gpt-4o")
         self._client = None
+        self._openai_mode = None
         self._langchain_client = None
 
         # try LangChain ChatOpenAI first
@@ -51,8 +52,13 @@ class ModelClient:
             try:
                 import openai
 
-                openai.api_key = self.api_key
-                self._client = openai
+                if hasattr(openai, "OpenAI"):
+                    self._client = openai.OpenAI(api_key=self.api_key)
+                    self._openai_mode = "v1"
+                else:
+                    openai.api_key = self.api_key
+                    self._client = openai
+                    self._openai_mode = "legacy"
             except Exception:
                 logging.exception("failed to import openai client")
 
@@ -188,10 +194,25 @@ class ModelClient:
         # call OpenAI ChatCompletion API with retries
         for attempt in range(4):
             try:
-                resp = self._client.ChatCompletion.create(model=self.model, messages=mapped, max_tokens=max_response_tokens, timeout=60)
-                choices = resp.get("choices") if isinstance(resp, dict) else getattr(resp, "choices", None)
+                if self._openai_mode == "v1":
+                    resp = self._client.chat.completions.create(
+                        model=self.model,
+                        messages=mapped,
+                        max_tokens=max_response_tokens,
+                    )
+                    choices = getattr(resp, "choices", None)
+                else:
+                    resp = self._client.ChatCompletion.create(
+                        model=self.model,
+                        messages=mapped,
+                        max_tokens=max_response_tokens,
+                        timeout=60,
+                    )
+                    choices = resp.get("choices") if isinstance(resp, dict) else getattr(resp, "choices", None)
                 if choices:
                     first = choices[0]
+                    if self._openai_mode == "v1":
+                        return getattr(getattr(first, "message", None), "content", "") or ""
                     if isinstance(first, dict):
                         return first.get("message", {}).get("content", "")
                     else:
