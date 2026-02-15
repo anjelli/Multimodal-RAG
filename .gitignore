@@ -1,6 +1,31 @@
+<<<<<<< HEAD
 .venv/
 __pycache__/
 *.pyc
 chroma_db/
 processed_data/
 extracted_data/
+=======
+# Python caches/build artifacts
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Local runtime outputs
+integration.log
+processed_data/
+extracted_data/
+chroma_db/
+
+# Notebook / OS noise
+.ipynb_checkpoints/
+.DS_Store
+>>>>>>> 5f55ae2ef4bc57f1114358ed9e85a77f28d6a7c0
