@@ -17,7 +17,6 @@ pip install -r requirements.txt
   - `OPENAI_API_KEY` (required only when you want OpenAI embeddings/LLM calls)
 - Optional directory overrides:
   - `MMRAG_DATA_DIR`, `MMRAG_EXTRACTED_DIR`, `MMRAG_PROCESSED_DIR`, `MMRAG_CHROMA_DIR`
-- `--openai-key` can be provided to `src.main` and is applied for both embeddings and LLM answer generation.
 
 ## Architecture (compact)
 
@@ -56,10 +55,10 @@ MMRAG_SKIP_IMAGES=1 python -m src.main --source data/<your_report>.pdf
 python -m src.main --source data/<your_report>.pdf --no-images
 ```
 
-### 2) Query indexed content (+ generated answer)
+### 2) Query indexed content
 
 ```bash
-python -m src.main --question "What are the net-zero goals?" --top-k 4 --openai-key "$OPENAI_API_KEY"
+python -m src.main --question "What are the net-zero goals?" --top-k 4
 ```
 
 ### 3) End-to-end smoke run
