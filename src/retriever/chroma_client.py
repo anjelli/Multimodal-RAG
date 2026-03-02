@@ -1,43 +1,23 @@
 from typing import Optional
 
-
 def get_chroma_collection(collection_name: str, persist_dir: str):
     if not collection_name:
         raise ValueError("collection_name must be provided")
     if not persist_dir:
         raise ValueError("persist_dir must be provided")
+
     try:
-        import chromadb
+        from chromadb import PersistentClient
     except Exception as e:
         raise RuntimeError(
-            "chromadb is required for Chroma persistence. Install it with `pip install chromadb`."
+            "chromadb with PersistentClient is required. Install/update chromadb."
         ) from e
 
-    # Try older and newer client constructors to be compatible across chroma versions
-    client = None
-    try:
-        from chromadb.config import Settings
+    client = PersistentClient(path=str(persist_dir))
 
-        client = chromadb.Client(Settings(chroma_db_impl="duckdb+parquet", persist_directory=str(persist_dir)))
-    except Exception:
-        try:
-            # newer chroma versions accept simple kwargs
-            client = chromadb.Client(persist_directory=str(persist_dir))
-        except Exception:
-            try:
-                # last resort: default constructor
-                client = chromadb.Client()
-            except Exception as e:
-                raise RuntimeError("Failed to construct a Chroma client: %s" % e)
-
-    # create or get collection
     try:
         collection = client.get_collection(name=collection_name)
     except Exception:
-        try:
-            collection = client.create_collection(name=collection_name)
-        except Exception:
-            # fallback: some versions expect different args
-            collection = client.create_collection(collection_name)
+        collection = client.create_collection(name=collection_name)
 
     return client, collection
