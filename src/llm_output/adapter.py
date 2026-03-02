@@ -1,51 +1,68 @@
-import torch
-from transformers import AutoTokenizer, AutoModelForCausalLM
+import os
+import google.generativeai as genai
 
 
 class ModelClient:
-    def __init__(self, model_name="TinyLlama/TinyLlama-1.1B-Chat-v1.0"):
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+    """LLM client that uses the Google Gemini API.
 
-        self.model = AutoModelForCausalLM.from_pretrained(
-            model_name,
-            torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
-            device_map="auto",
-        )
+    Requires the GOOGLE_API_KEY environment variable to be set.
+    Get a free key at https://aistudio.google.com/apikey
+    """
+
+    def __init__(self, model_name="gemini-2.0-flash"):
+        api_key = os.environ.get("GOOGLE_API_KEY")
+        if not api_key:
+            raise ValueError(
+                "GOOGLE_API_KEY environment variable is not set. "
+                "Get a free API key at https://aistudio.google.com/apikey"
+            )
+        genai.configure(api_key=api_key)
+        self.model_name = model_name
 
     def invoke(self, messages):
-        prompt = self._build_prompt(messages)
+        """Generate a response from Google Gemini.
 
-        inputs = self.tokenizer(
-            prompt,
-            return_tensors="pt",
-            truncation=True,
-            max_length=2048
-        ).to(self.model.device)
+        Args:
+            messages: list of dicts with 'role' and 'content' keys.
+                      Supported roles: 'system', 'user', 'assistant'.
 
-        with torch.no_grad():
-            output = self.model.generate(
-                **inputs,
-                max_new_tokens=300,
-                do_sample=False,        # deterministic
-                repetition_penalty=1.15,
-                eos_token_id=self.tokenizer.eos_token_id
-            )
-
-        generated = output[0][inputs["input_ids"].shape[-1]:]
-
-        return self.tokenizer.decode(
-            generated,
-            skip_special_tokens=True
-        ).strip()
-
-    def _build_prompt(self, messages):
-        system_text = ""
-        user_text = ""
+        Returns:
+            str: the model's response text.
+        """
+        system_parts = []
+        conversation = []
 
         for m in messages:
-            if m["role"] == "system":
-                system_text += m["content"] + "\n"
-            elif m["role"] == "user":
-                user_text += m["content"] + "\n"
+            role = m.get("role", "") if isinstance(m, dict) else ""
+            content = m.get("content", "") if isinstance(m, dict) else ""
 
-        return f"{system_text}\n{user_text}"
+            # Support LangChain-style message objects
+            if hasattr(m, "content") and not isinstance(m, dict):
+                content = m.content
+                class_name = type(m).__name__
+                if class_name == "SystemMessage":
+                    role = "system"
+                elif class_name == "HumanMessage":
+                    role = "user"
+                elif class_name == "AIMessage":
+                    role = "model"
+
+            if role == "system":
+                system_parts.append(content)
+            elif role == "assistant":
+                conversation.append({"role": "model", "parts": [content]})
+            else:
+                conversation.append({"role": "user", "parts": [content]})
+
+        # Create model with system instruction if provided
+        system_instruction = "\n".join(system_parts) if system_parts else None
+        model = genai.GenerativeModel(
+            model_name=self.model_name,
+            system_instruction=system_instruction,
+            generation_config=genai.types.GenerationConfig(
+                temperature=0,
+            ),
+        )
+
+        response = model.generate_content(conversation)
+        return response.text.strip()
