@@ -135,7 +135,7 @@ def main():
 
         print("Top Retrieved Chunks\n")
         for idx, result in enumerate(results, start=1):
-            print(f"[{idx}] score={{round(result.get('distance', 0), 4)}}")
+            print(f"[{idx}] score={round(result.get('distance', 0), 4)}")
             print(result.get("summary"))
             print()  
 
@@ -161,8 +161,8 @@ def main():
             {
                 "role": "user",
                 "content": (
-                    f"Context:\n{{context}}\n\n"
-                    f"Question: {{args.question}}\n\n"
+                    f"Context:\n{context}\n\n"
+                    f"Question: {args.question}\n\n"
                     "Provide a clear, structured answer."
                 ),
             },
@@ -185,7 +185,7 @@ def main():
             raise SystemExit("No PDF found in data directory")
         source = str(pdfs[0])
 
-    print(f"\nIngesting: {{source}}\n")
+    print(f"\nIngesting: {source}\n")
 
     from src.ingestion.pipeline import IngestionPipeline
 

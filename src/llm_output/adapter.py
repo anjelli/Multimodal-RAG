@@ -1,29 +1,31 @@
-import os
-from openai import OpenAI
+import torch
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
 
 class ModelClient:
-    """LLM client that uses the OpenAI API.
+    """LLM client that uses a local HuggingFace model via the transformers library.
 
-    Requires the OPENAI_API_KEY environment variable to be set.
-    Get an API key at https://platform.openai.com/api-keys
+    No API key is required. The model is downloaded from HuggingFace Hub on first use.
+    Default model: TinyLlama/TinyLlama-1.1B-Chat-v1.0
     """
 
-    def __init__(self, model_name="gpt-4o-mini"):
-        api_key = os.environ.get("OPENAI_API_KEY")
-        if not api_key:
-            raise ValueError(
-                "OPENAI_API_KEY environment variable is not set. "
-                "Get an API key at https://platform.openai.com/api-keys"
-            )
-        self.client = OpenAI(api_key=api_key)
+    def __init__(self, model_name="TinyLlama/TinyLlama-1.1B-Chat-v1.0"):
         self.model_name = model_name
+        self.dtype = torch.float16 if torch.cuda.is_available() else torch.float32
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+        self.model = AutoModelForCausalLM.from_pretrained(
+            model_name,
+            torch_dtype=self.dtype,
+            device_map="auto",
+        )
 
     def invoke(self, messages):
-        """Generate a response from OpenAI.
+        """Generate a response from the local model.
 
         Args:
-            messages: list of dicts with 'role' and 'content' keys.
+            messages: list of dicts with 'role' and 'content' keys,
+                      or LangChain-style message objects (SystemMessage,
+                      HumanMessage, AIMessage).
                       Supported roles: 'system', 'user', 'assistant'.
 
         Returns:
@@ -51,10 +53,27 @@ class ModelClient:
             else:
                 formatted.append({"role": "user", "content": content})
 
-        response = self.client.chat.completions.create(
-            model=self.model_name,
-            messages=formatted,
-            temperature=0,
-        )
+        # Build a chat-style prompt with system/user separation
+        prompt_parts = []
+        for msg in formatted:
+            if msg["role"] == "system":
+                prompt_parts.append(f"<|system|>\n{msg['content']}</s>")
+            elif msg["role"] == "user":
+                prompt_parts.append(f"<|user|>\n{msg['content']}</s>")
+            elif msg["role"] == "assistant":
+                prompt_parts.append(f"<|assistant|>\n{msg['content']}</s>")
+        prompt_parts.append("<|assistant|>")
+        prompt = "\n".join(prompt_parts)
 
-        return response.choices[0].message.content.strip()
+        inputs = self.tokenizer(prompt, return_tensors="pt").to(self.model.device)
+        with torch.no_grad():
+            output_ids = self.model.generate(
+                **inputs,
+                max_new_tokens=512,
+                do_sample=False,
+                repetition_penalty=1.15,
+            )
+
+        # Decode only the newly generated tokens (batch size is always 1 here)
+        generated = output_ids[0][inputs["input_ids"].shape[1]:]
+        return self.tokenizer.decode(generated, skip_special_tokens=True).strip()
