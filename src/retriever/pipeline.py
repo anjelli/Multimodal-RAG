@@ -152,11 +152,7 @@ class RetrieverPipeline:
                 if callable(persist):
                     persist()
             except Exception:
-                count = "unknown"
-            logging.info("Collection count after ingestion: %s", count)
-
-        except Exception:
-            logging.exception("Failed to add documents to vectorstore")
+                logging.exception("Failed to add documents to vectorstore")
 
     def retrieve(self, query: str, k: int = 4) -> List[Dict[str, Any]]:
         if not query:
