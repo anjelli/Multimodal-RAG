@@ -2,6 +2,7 @@ import os
 from typing import List
 import time
 import logging
+import hashlib
 
 
 class EmbeddingClient:
@@ -12,6 +13,9 @@ class EmbeddingClient:
         self.model = model or os.environ.get("MMRAG_EMBEDDING_MODEL", "text-embedding-3-small")
         self._client = None
         self._openai_mode = None
+        # In-memory cache: sha256(text) → embedding vector (Issue 15)
+        self._cache: dict = {}
+        self._total_tokens_used: int = 0  # cumulative token count for cost tracking (Issue 14)
         if self.api_key:
             try:
                 import openai
@@ -38,15 +42,51 @@ class EmbeddingClient:
                 self.backend = "sbert"
             except Exception:
                 # final lightweight fallback: deterministic hash-based embeddings
-                import hashlib
-
                 self.backend = "hash"
                 self._hash_fn = hashlib.sha256
                 self._dim = int(os.environ.get("MMRAG_HASH_EMBED_DIM", 512))
+                # Issue 11: warn that hash backend is not semantic and unsuitable for production
+                logging.warning(
+                    "EmbeddingClient: no semantic backend available (no OPENAI_API_KEY and "
+                    "sentence-transformers not installed). Falling back to deterministic hash "
+                    "embeddings which are NOT semantic and will produce meaningless retrieval "
+                    "results. Set OPENAI_API_KEY or install sentence-transformers."
+                )
+
+    @staticmethod
+    def _text_cache_key(text: str) -> str:
+        return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
     def embed_texts(self, texts: List[str]) -> List[List[float]]:
         if not texts:
             return []
+
+        # Issue 15: check cache first; collect texts that need embedding
+        results: List = [None] * len(texts)
+        uncached_indices = []
+        uncached_texts = []
+        for i, t in enumerate(texts):
+            key = self._text_cache_key(t)
+            if key in self._cache:
+                results[i] = self._cache[key]
+            else:
+                uncached_indices.append(i)
+                uncached_texts.append(t)
+
+        if not uncached_texts:
+            return results  # type: ignore[return-value]
+
+        new_embeddings = self._embed_uncached(uncached_texts)
+
+        # populate cache and results
+        for orig_i, text, emb in zip(uncached_indices, uncached_texts, new_embeddings):
+            key = self._text_cache_key(text)
+            self._cache[key] = emb
+            results[orig_i] = emb
+
+        return results  # type: ignore[return-value]
+
+    def _embed_uncached(self, texts: List[str]) -> List[List[float]]:
         if self.backend == "openai":
             # batching for OpenAI
             embeds = []
@@ -58,6 +98,16 @@ class EmbeddingClient:
                         if self._openai_mode == "v1":
                             resp = self._client.embeddings.create(input=chunk, model=self.model)
                             embeds.extend([e.embedding for e in resp.data])
+                            # Issue 14: log token usage for cost tracking
+                            usage = getattr(resp, "usage", None)
+                            if usage is not None:
+                                tokens = getattr(usage, "total_tokens", 0) or 0
+                                self._total_tokens_used += tokens
+                                logging.info(
+                                    "OpenAI embeddings: %d tokens used in this batch (cumulative: %d)",
+                                    tokens,
+                                    self._total_tokens_used,
+                                )
                         else:
                             resp = self._client.Embedding.create(input=chunk, model=self.model, request_timeout=30)
                             embeds.extend([e["embedding"] for e in resp["data"]])
