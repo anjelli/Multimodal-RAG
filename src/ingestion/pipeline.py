@@ -50,6 +50,7 @@ class IngestionPipeline:
 
     def _load_data_with_pdfplumber(self):
         """Fallback: extract text, tables, and images using pdfplumber (no system dependencies)."""
+        import os
         from src.ingestion.pdfplumber_extract import (
             extract_with_pdfplumber,
             extract_images_with_pdfplumber,
@@ -57,8 +58,12 @@ class IngestionPipeline:
             save_tables_as_csvs,
         )
 
+        # Issue 12: respect MMRAG_MAX_PAGES to avoid OOM on large PDFs
+        max_pages_env = os.environ.get("MMRAG_MAX_PAGES")
+        max_pages = int(max_pages_env) if max_pages_env and max_pages_env.isdigit() else None
+
         # Extract with pdfplumber
-        extracted = extract_with_pdfplumber(self.source)
+        extracted = extract_with_pdfplumber(self.source, max_pages=max_pages)
         text_blocks = extracted.get("text_blocks", [])
         tables = extracted.get("tables", [])
 
@@ -86,11 +91,21 @@ class IngestionPipeline:
 
         self.raw_elements = []
         for block in text_blocks:
-            # Split into paragraphs and add
             text = block.get("text", "")
-            for para in text.split("\n"):
-                if para.strip():
-                    self.raw_elements.append(TextElement(para))
+            page_num = block.get("page")
+            # Preserve paragraph structure: split on double newlines first;
+            # fall back to single newlines only if no paragraphs found.
+            paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
+            if not paragraphs:
+                paragraphs = [p.strip() for p in text.split("\n") if p.strip()]
+            for para in paragraphs:
+                # Skip very short fragments (likely headers/footers/noise)
+                if len(para) < 10:
+                    continue
+                elem = TextElement(para)
+                if page_num is not None:
+                    elem.page = page_num
+                self.raw_elements.append(elem)
 
         if self.extract_images:
             image_paths = extract_images_with_pdfplumber(self.source, self.extracted_dir)
@@ -128,7 +143,15 @@ class IngestionPipeline:
                 elif "NarrativeText" in t:
                     self.processed_data["NarrativeText"].append(str(element))
                 elif "Text" in t:
-                    self.processed_data["Text"].append(str(element))
+                    text_str = str(element)
+                    # Skip very short text fragments (noise/garbage)
+                    if len(text_str.strip()) < 10:
+                        continue
+                    page = getattr(element, "page", None)
+                    if page is not None:
+                        self.processed_data["Text"].append({"text": text_str, "metadata": {"page": page}})
+                    else:
+                        self.processed_data["Text"].append(text_str)
                 elif "ListItem" in t:
                     self.processed_data["ListItem"].append(str(element))
                 elif "Image" in t:

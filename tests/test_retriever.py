@@ -48,3 +48,45 @@ def test_retriever_add_and_query(tmp_path):
     assert results[0]["summary"]
     assert "doc_id" in results[0]["metadata"]
     assert results[0]["content"] is not None
+
+
+def test_retriever_deduplication(tmp_path):
+    """Issue 3: adding the same content twice should only index it once."""
+    store = FakeVectorStore()
+    retriever = RetrieverPipeline(
+        embedding_model=DummyEmbedder(),
+        vectorstore=store,
+        docstore_path=str(tmp_path / "docstore.db"),
+    )
+
+    content = {"text": "unique document content", "type": "text"}
+    retriever.add_documents(summaries=["summary1"], contents=[content])
+    retriever.add_documents(summaries=["summary1"], contents=[content])
+
+    # Vector store should only contain one document, not two
+    assert store.count() == 1, f"Expected 1 doc after dedup, got {store.count()}"
+
+
+def test_retriever_metadata_includes_provenance(tmp_path):
+    """Issue 4: metadata should include source, content_type, extraction_method fields."""
+    store = FakeVectorStore()
+    retriever = RetrieverPipeline(
+        embedding_model=DummyEmbedder(),
+        vectorstore=store,
+        docstore_path=str(tmp_path / "docstore.db"),
+    )
+
+    content = {
+        "text": "sample text",
+        "type": "text",
+        "source": "test.pdf",
+        "source_document": "test.pdf",
+        "content_type": "narrativetext",
+        "extraction_method": "unstructured",
+    }
+    retriever.add_documents(summaries=["sample summary"], contents=[content])
+
+    meta = store.metas[0]
+    assert meta.get("source") == "test.pdf"
+    assert meta.get("content_type") == "narrativetext"
+    assert meta.get("extraction_method") == "unstructured"
