@@ -33,24 +33,38 @@ def parse_args():
 
 # ---------------------- CONTEXT BUILDER ----------------------
 
-def build_context(results, max_chars=3000, max_chunks=5):
+import re
+
+
+def build_context(results, max_chars=3000, max_chunks=5, query: str = ""):
     seen = set()
     combined = []
     total = 0
 
+    keyword_set = {w for w in re.split(r"\W+", query.lower()) if len(w) > 2} if query else set()
+
+    def keyword_score(text: str) -> int:
+        if not keyword_set:
+            return 1
+        tokens = {w for w in re.split(r"\W+", text.lower()) if len(w) > 2}
+        return len(keyword_set & tokens)
+
+    # filter out chunks with no keyword overlap when query is provided
+    filtered = []
     for r in results:
         text = r.get("content") or r.get("summary")
         if isinstance(text, dict):
             continue
         if not text:
             continue
-
         text = str(text).strip()
-
-        # drop low-information fragments
         if len(text) < 30:
             continue
+        if keyword_set and keyword_score(text) == 0:
+            continue
+        filtered.append(text)
 
+    for text in filtered:
         # deduplicate
         if text in seen:
             continue
@@ -66,6 +80,42 @@ def build_context(results, max_chars=3000, max_chunks=5):
             break
 
     return "\n\n".join(combined)
+
+
+def clean_response(text: str) -> str:
+    """Remove section headings, deduplicate sentences, and validate completeness."""
+    # Remove lines that look like section headings (short, title-case or all-caps, no period)
+    lines = text.splitlines()
+    cleaned_lines = []
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            cleaned_lines.append(line)
+            continue
+        # Skip lines that are purely heading-like: short, end without punctuation
+        if len(stripped) < 80 and not stripped.endswith((".", "?", "!")):
+            words = stripped.split()
+            if words and all(w[0].isupper() or not w[0].isalpha() for w in words if w):
+                continue
+        cleaned_lines.append(line)
+    text = "\n".join(cleaned_lines).strip()
+
+    # Deduplicate sentences
+    sentences = re.split(r"(?<=[.!?])\s+", text)
+    seen_sents: set = set()
+    unique_sents = []
+    for s in sentences:
+        key = re.sub(r"\s+", " ", s.strip().lower())
+        if key and key not in seen_sents:
+            seen_sents.add(key)
+            unique_sents.append(s)
+    text = " ".join(unique_sents).strip()
+
+    # If the result is empty or suspiciously short, return a fallback message
+    if len(text) < 10:
+        return "The answer is not explicitly stated in the provided context."
+
+    return text
 
 
 # ---------------------- MAIN ----------------------
@@ -99,7 +149,7 @@ def main():
             print(result.get("summary"))
             print()
 
-        context = build_context(results)
+        context = build_context(results, query=args.question)
 
         from src.llm_output.adapter import ModelClient
 
@@ -107,12 +157,15 @@ def main():
             {
                 "role": "system",
                 "content": (
-                    "You are a precise corporate analyst.\n"
-                    "Answer ONLY using the provided context.\n"
-                    "If insufficient information exists, say: "
-                    "'The answer is not explicitly stated in the provided context.'\n"
-                    "Do not repeat phrases. Do not invent details.\n"
-                    "Provide a concise structured answer."
+                    "You are a precise corporate analyst answering questions from official documents.\n"
+                    "Rules:\n"
+                    "1. Extract ONLY factual information explicitly stated in the context.\n"
+                    "2. Do NOT include section headings, report titles, or structural labels in your answer.\n"
+                    "3. Do NOT repeat phrases or sentences.\n"
+                    "4. Do NOT invent numbers, names, or details not present in the context.\n"
+                    "5. Write in complete, grammatically correct sentences.\n"
+                    "6. If the context does not contain enough information to answer, respond with: "
+                    "'The answer is not explicitly stated in the provided context.'"
                 ),
             },
             {
@@ -130,7 +183,7 @@ def main():
         answer = ModelClient().invoke(messages)
 
         print("\nFinal Answer\n")
-        print(answer.strip())
+        print(clean_response(answer.strip()))
         return
 
     # ---------------------- INGESTION MODE ----------------------
