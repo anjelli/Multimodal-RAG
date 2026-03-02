@@ -3,6 +3,7 @@ import uuid
 import logging
 import shelve
 import re
+import hashlib
 from src.config import Config
 
 
@@ -16,56 +17,140 @@ class RetrieverPipeline:
     def _open_docstore(self):
         return shelve.open(self.docstore_path)
 
-    def add_documents(
-        self,
-        summaries: List[str],
-        contents: List[Any],
-        embeddings: Optional[List[List[float]]] = None,
-    ):
+    @staticmethod
+    def _content_hash(content: Any) -> str:
+        """Compute SHA-256 hash of content for deduplication (Issue 3)."""
+        text = content if isinstance(content, str) else str(content)
+        return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+    def add_documents(self, summaries: List[str], contents: List[Any], embeddings: Optional[List[List[float]]] = None):
         if len(summaries) != len(contents):
             raise ValueError("summaries and contents must be same length")
 
-        doc_ids = [str(uuid.uuid4()) for _ in contents]
+        # Issue 3: deduplicate via SHA-256 content hash stored in docstore
+        existing_hashes: set = set()
+        try:
+            with self._open_docstore() as ds:
+                existing_hashes = set(ds.get("_content_hashes", {}).keys())
+        except Exception:
+            logging.warning("Could not read existing content hashes from docstore; skipping dedup check")
 
+        filtered_summaries, filtered_contents, filtered_indices = [], [], []
+        for i, (summary, content) in enumerate(zip(summaries, contents)):
+            h = self._content_hash(content)
+            if h in existing_hashes:
+                logging.debug("Skipping duplicate document (hash %s)", h[:12])
+                continue
+            filtered_summaries.append(summary)
+            filtered_contents.append(content)
+            filtered_indices.append(i)
+
+        if not filtered_summaries:
+            logging.info("All %d documents already indexed; nothing to add.", len(summaries))
+            return
+
+        if len(filtered_summaries) < len(summaries):
+            logging.info(
+                "Deduplication: skipping %d already-indexed documents; adding %d new.",
+                len(summaries) - len(filtered_summaries),
+                len(filtered_summaries),
+            )
+            # re-slice embeddings to match filtered set
+            if embeddings is not None:
+                embeddings = [embeddings[i] for i in filtered_indices]
+
+        doc_ids = [str(uuid.uuid4()) for _ in filtered_contents]
         metadatas = []
-        for i, content in enumerate(contents):
+        for i, content in enumerate(filtered_contents):
             meta = {self.id_key: doc_ids[i]}
             if isinstance(content, dict):
-                for k in ("path", "csv_path", "shape", "type"):
+                # Issue 4: include provenance/metadata fields
+                for k in ("path", "csv_path", "shape", "type", "source", "page", "extraction_method", "content_type"):
+
                     if content.get(k) is not None:
                         meta[k] = content.get(k)
                 extra_meta = content.get("metadata")
                 if isinstance(extra_meta, dict):
+                    # carry through page_number, source_document, etc.
+                    for k in ("page", "page_number", "source", "source_document", "extraction_method", "content_type"):
+                        if k in extra_meta:
+                            meta[k] = extra_meta[k]
                     meta.update(extra_meta)
             metadatas.append(meta)
 
-        # Persist original contents
+        # If vectorstore is a chroma collection (has add(ids=...)), use its API
+        try:
+            add_fn = getattr(self.vectorstore, "add", None)
+        except Exception:
+            add_fn = None
+
+        # persist contents and updated hashes in shelve-backed docstore
         try:
             with self._open_docstore() as ds:
-                for _id, c in zip(doc_ids, contents):
+                for _id, c in zip(doc_ids, filtered_contents):
                     ds[_id] = c
+                # Issue 3: update the set of known content hashes
+                known_hashes = ds.get("_content_hashes", {})
+                for content in filtered_contents:
+                    h = self._content_hash(content)
+                    known_hashes[h] = True
+                ds["_content_hashes"] = known_hashes
         except Exception:
             logging.exception("Failed to persist to shelve docstore %s", self.docstore_path)
 
-        # Add to Chroma
-        try:
-            if embeddings is None and hasattr(self.embedding_model, "embed_texts"):
-                embeddings = self.embedding_model.embed_texts(summaries)
-
-            kwargs = {
-                "ids": doc_ids,
-                "documents": summaries,
-                "metadatas": metadatas,
-            }
-
-            if embeddings is not None:
-                kwargs["embeddings"] = embeddings
-
-            self.vectorstore.add(**kwargs)
-
-            logging.info("Added %s documents to collection", len(summaries))
+        # add to vectorstore
+        if add_fn:
             try:
-                count = self.vectorstore.count()
+                # chroma expects embeddings possibly; if not provided compute using embedding_model
+                if embeddings is None and hasattr(self.embedding_model, "embed_texts"):
+                    embeddings = self.embedding_model.embed_texts(filtered_summaries)
+
+                # call collection.add
+                kwargs = {"ids": doc_ids, "documents": filtered_summaries, "metadatas": metadatas}
+                if embeddings is not None:
+                    kwargs["embeddings"] = embeddings
+                add_fn(**kwargs)
+                logging.info("Added %s documents to collection", len(filtered_summaries))
+                try:
+                    count = self.vectorstore.count()
+                except Exception:
+                    count = "unknown"
+                logging.info("Collection count after ingestion: %s", count)
+                # try persist on client if available (chroma client may be attached)
+                client = getattr(self.vectorstore, "client", None)
+                if client is not None:
+                    try:
+                        client.persist()
+                    except Exception:
+                        pass
+            except TypeError:
+                # fallback if add signature different
+                try:
+                    self.vectorstore.add(filtered_summaries)
+                    logging.info("Added %s documents to collection", len(filtered_summaries))
+                    try:
+                        count = self.vectorstore.count()
+                    except Exception:
+                        count = "unknown"
+                    logging.info("Collection count after ingestion: %s", count)
+                except Exception:
+                    logging.exception("Failed to add documents to vectorstore")
+        else:
+            # fallback for older vectorstore APIs (langchain-style)
+            from langchain_core.documents import Document
+
+            docs = [Document(page_content=s, metadata=m) for s, m in zip(filtered_summaries, metadatas)]
+            try:
+                self.vectorstore.add_documents(docs)
+                logging.info("Added %s documents to collection", len(filtered_summaries))
+                try:
+                    count = self.vectorstore.count()
+                except Exception:
+                    count = "unknown"
+                logging.info("Collection count after ingestion: %s", count)
+                persist = getattr(self.vectorstore, "persist", None)
+                if callable(persist):
+                    persist()
             except Exception:
                 count = "unknown"
             logging.info("Collection count after ingestion: %s", count)

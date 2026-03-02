@@ -31,7 +31,8 @@ def extract_with_pdfplumber(pdf_path: str, max_pages: int = None) -> Dict[str, L
 
             # Extract text
             text = page.extract_text()
-            if text:
+            # Issue 8: validate minimum text length to filter out garbage/empty pages
+            if text and len(text.strip()) >= 10:
                 elements["text_blocks"].append({"page": page_num + 1, "text": text})
 
             # Extract tables
