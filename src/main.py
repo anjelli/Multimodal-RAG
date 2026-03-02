@@ -1,7 +1,3 @@
-import os
-os.environ["TRANSFORMERS_VERBOSITY"] = "error"
-os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
-
 import argparse
 import logging
 from pathlib import Path
@@ -11,14 +7,12 @@ from src.retriever.embeddings import EmbeddingClient
 from src.retriever.chroma_client import get_chroma_collection
 from src.retriever.pipeline import RetrieverPipeline
 
-
 def setup_logging(level=logging.WARNING):
     logging.basicConfig(
         level=level,
         format="%(asctime)s %(levelname)s %(message)s",
         force=True,
     )
-
 
 def parse_args():
     p = argparse.ArgumentParser(description="Multimodal RAG ingestion and retrieval")
@@ -30,13 +24,11 @@ def parse_args():
     p.add_argument("--top-k", type=int, default=8)
     return p.parse_args()
 
-
 # ---------------------- CONTEXT BUILDER ----------------------
 
 import re
 
-
-def build_context(results, max_chars=3000, max_chunks=5, query: str = ""):
+def build_context(results, max_chars=6000, max_chunks=8, query: str = ""):
     seen = set()
     combined = []
     total = 0
@@ -81,7 +73,6 @@ def build_context(results, max_chars=3000, max_chunks=5, query: str = ""):
 
     return "\n\n".join(combined)
 
-
 def clean_response(text: str) -> str:
     """Remove section headings, deduplicate sentences, and validate completeness."""
     # Remove lines that look like section headings (short, title-case or all-caps, no period)
@@ -117,7 +108,6 @@ def clean_response(text: str) -> str:
 
     return text
 
-
 # ---------------------- MAIN ----------------------
 
 def main():
@@ -145,9 +135,9 @@ def main():
 
         print("Top Retrieved Chunks\n")
         for idx, result in enumerate(results, start=1):
-            print(f"[{idx}] score={round(result.get('distance', 0), 4)}")
+            print(f"[{idx}] score={{round(result.get('distance', 0), 4)}}")
             print(result.get("summary"))
-            print()
+            print()  
 
         context = build_context(results, query=args.question)
 
@@ -171,8 +161,8 @@ def main():
             {
                 "role": "user",
                 "content": (
-                    f"Context:\n{context}\n\n"
-                    f"Question: {args.question}\n\n"
+                    f"Context:\n{{context}}\n\n"
+                    f"Question: {{args.question}}\n\n"
                     "Provide a clear, structured answer."
                 ),
             },
@@ -195,7 +185,7 @@ def main():
             raise SystemExit("No PDF found in data directory")
         source = str(pdfs[0])
 
-    print(f"\nIngesting: {source}\n")
+    print(f"\nIngesting: {{source}}\n")
 
     from src.ingestion.pipeline import IngestionPipeline
 
@@ -242,7 +232,6 @@ def main():
 
     print("Ingestion complete.")
     print("Indexed chunks:", len(text_summaries))
-
 
 if __name__ == "__main__":
     main()
