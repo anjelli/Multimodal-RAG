@@ -1,26 +1,26 @@
 import os
-import google.generativeai as genai
+from openai import OpenAI
 
 
 class ModelClient:
-    """LLM client that uses the Google Gemini API.
+    """LLM client that uses the OpenAI API.
 
-    Requires the GOOGLE_API_KEY environment variable to be set.
-    Get a free key at https://aistudio.google.com/apikey
+    Requires the OPENAI_API_KEY environment variable to be set.
+    Get an API key at https://platform.openai.com/api-keys
     """
 
-    def __init__(self, model_name="gemini-2.0-flash"):
-        api_key = os.environ.get("GOOGLE_API_KEY")
+    def __init__(self, model_name="gpt-4o-mini"):
+        api_key = os.environ.get("OPENAI_API_KEY")
         if not api_key:
             raise ValueError(
-                "GOOGLE_API_KEY environment variable is not set. "
-                "Get a free API key at https://aistudio.google.com/apikey"
+                "OPENAI_API_KEY environment variable is not set. "
+                "Get an API key at https://platform.openai.com/api-keys"
             )
-        genai.configure(api_key=api_key)
+        self.client = OpenAI(api_key=api_key)
         self.model_name = model_name
 
     def invoke(self, messages):
-        """Generate a response from Google Gemini.
+        """Generate a response from OpenAI.
 
         Args:
             messages: list of dicts with 'role' and 'content' keys.
@@ -29,8 +29,7 @@ class ModelClient:
         Returns:
             str: the model's response text.
         """
-        system_parts = []
-        conversation = []
+        formatted = []
 
         for m in messages:
             role = m.get("role", "") if isinstance(m, dict) else ""
@@ -45,24 +44,17 @@ class ModelClient:
                 elif class_name == "HumanMessage":
                     role = "user"
                 elif class_name == "AIMessage":
-                    role = "model"
+                    role = "assistant"
 
-            if role == "system":
-                system_parts.append(content)
-            elif role == "assistant":
-                conversation.append({"role": "model", "parts": [content]})
+            if role in ("system", "user", "assistant"):
+                formatted.append({"role": role, "content": content})
             else:
-                conversation.append({"role": "user", "parts": [content]})
+                formatted.append({"role": "user", "content": content})
 
-        # Create model with system instruction if provided
-        system_instruction = "\n".join(system_parts) if system_parts else None
-        model = genai.GenerativeModel(
-            model_name=self.model_name,
-            system_instruction=system_instruction,
-            generation_config=genai.types.GenerationConfig(
-                temperature=0,
-            ),
+        response = self.client.chat.completions.create(
+            model=self.model_name,
+            messages=formatted,
+            temperature=0,
         )
 
-        response = model.generate_content(conversation)
-        return response.text.strip()
+        return response.choices[0].message.content.strip()
