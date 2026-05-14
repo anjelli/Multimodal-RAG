@@ -1,4 +1,4 @@
-# Multimodal RAG for Financial Document Intelligence
+# Multimodal RAG 
 
 A high-performance Multimodal Retrieval-Augmented Generation (RAG) pipeline for querying complex financial and sustainability reports containing:
 
